@@ -44,6 +44,14 @@ objects:
       controlPlane:
         replicas: 1
         bootstrapUser: admin
+        # REQUIRED even at replicas:1 — the CP always runs a provisioner that acquires a
+        # lease named "<cr-name>-provisioner". The operator only creates the lease Role/
+        # RoleBinding for the gateway SA when leaderElection is enabled with the k8s-lease
+        # backend. Without this, every MCPGateway hangs in `Creating` (the provisioner gets
+        # `leases.coordination.k8s.io ... is forbidden`).
+        leaderElection:
+          enabled: true
+          backend: k8s-lease
         # Public DP URL returned to MCP clients; matches the DP Route host (Step 9).
         dpExternalBasePath: "https://mcp-gw-dp.${CLUSTER_DOMAIN}"
         resources:

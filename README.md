@@ -349,6 +349,12 @@ objects:
       controlPlane:
         replicas: 1
         bootstrapUser: admin
+        # REQUIRED even at replicas:1: the CP provisioner acquires a leader-election lease,
+        # and the operator only creates the lease RBAC for the gateway SA when this is set.
+        # Without it, every MCPGateway hangs in `Creating` (leases ... forbidden).
+        leaderElection:
+          enabled: true
+          backend: k8s-lease
         dpExternalBasePath: "https://mcp-gw-dp.${CLUSTER_DOMAIN}"
         resources:
           requests: { cpu: 100m, memory: 512Mi }
@@ -462,7 +468,7 @@ in-cluster Deployment + Service named `mcp-duckduckgo`:
 oc apply -f mcpserver-duckduckgo.yaml
 
 # The operator reconciles the MCPServer into a Deployment + Service named `mcp-duckduckgo`.
-oc get mcpserver duckduckgo -n mcp-gateway      # PHASE should be Ready (not Failed)
+oc get mcpserver duckduckgo -n mcp-gateway      # PHASE should be Running (not Failed)
 oc rollout status deploy/mcp-duckduckgo -n mcp-gateway --timeout=120s
 ```
 
@@ -479,12 +485,14 @@ oc apply -f catalog-and-gateway.yaml
 oc get mcpgw pov-gateway -n mcp-gateway -w        # wait for status Active
 ```
 
-Capture the gateway URL (it carries a generated key, so read it from status — don't hand-build it):
+Capture the gateway URL — read it from status, don't hand-build it. The MCP endpoint clients use
+is `.status.endpoints.sk` (the server-key endpoint; the status also exposes `id` (by gateway UUID)
+and `registry`):
 
 ```bash
-GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.url}')
+GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.endpoints.sk}')
 echo "$GATEWAY_URL"
-# e.g. https://mcp-gw-dp.apps.<cluster>/gateways/sk/<key>/mcp
+# e.g. https://mcp-gw-dp.apps.<cluster>/gateways/sk/pov-gateway/mcp
 ```
 
 ### ✅ Step 11c — Verification gate (do not proceed if either fails)
@@ -508,16 +516,26 @@ curl -sS -o /dev/null -w "with-token -> HTTP %{http_code}\n" -k -X POST "$GATEWA
 
 **Gate 2 — the tool actually works through the gateway:**
 
+> The data plane replies in MCP streamable-http (a Server-Sent-Events stream: `event:` / `data:`
+> lines), so send `Accept: application/json, text/event-stream` and pull the JSON out of the
+> `data:` frame with `sed -n 's/^data: //p'` before piping to `jq`.
+
 ```bash
 # DuckDuckGo's search tool should appear:
 curl -sS -k -X POST "$GATEWAY_URL" \
-  -H "Authorization: Bearer $AUTH_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' | jq '.result.tools[].name'
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' \
+  | sed -n 's/^data: //p' | jq '.result.tools[].name'
 
 # Call it and get real results back:
 curl -sS -k -X POST "$GATEWAY_URL" \
-  -H "Authorization: Bearer $AUTH_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"search","arguments":{"query":"docker mcp gateway"}}}' | jq .
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"search","arguments":{"query":"docker mcp gateway"}}}' \
+  | sed -n 's/^data: //p' | jq .
 ```
 
 Search results coming back means **every layer works** — TLS/Route, bearer auth, gateway routing,
@@ -621,7 +639,8 @@ oc delete pvc -l app.kubernetes.io/component=postgres -n mcp-gateway
 | Operator/Postgres/Redis pod won't schedule (`runAsUser … must be in the ranges …`) | SCC blocking the fixed UID | Grant `nonroot-v2` to the affected SA (Step 3). |
 | `gwsvc` stuck in `Provisioning`; operator logs show `cannot set blockOwnerDeletion` on a ConfigMap | ClusterRole missing `gatewayserviceconfigs/finalizers` | Apply Step 5b. |
 | `MCPServer` PHASE `Failed` / `Degraded`, no `mcp-<name>` pod; operator logs show `cannot set blockOwnerDeletion` on a Deployment | ClusterRole missing `mcpservers/finalizers` | Apply Step 5b (it grants both finalizers). |
-| All `MCPGateway` CRs stuck in `Creating`; CP logs show `leases.coordination.k8s.io "…-provisioner" is forbidden` | Lease RBAC not created for the gateway SA (only happens if reconcile partially failed earlier) | Ensure Step 5b is applied so reconcile completes; the operator then creates the lease Role itself. |
+| All `MCPGateway` CRs stuck in `Creating`; CP logs show `leases.coordination.k8s.io "…-provisioner" is forbidden` | `leaderElection` not enabled on the gwsvc, so the operator never created the gateway SA's lease RBAC | Set `spec.controlPlane.leaderElection.enabled: true` + `backend: k8s-lease` (Step 8) and re-apply the CR. |
+| `MCPServer` pod `ImagePullBackOff` with `no image found in image index for architecture "amd64"` | The server image is single-arch (e.g. arm64-only, built on Apple Silicon); ARO nodes are amd64 | Rebuild/push the image multi-arch: `docker buildx build --platform linux/amd64,linux/arm64 -t <img> --push .`, then `oc rollout restart deploy/mcp-<name>`. |
 | CP/DP pods `ImagePullBackOff` | Pull secret missing/not referenced | Confirm `ghcr-pull-secret` exists and the CR lists it under `imagePullSecrets`; re-auth with `read:packages`. |
 | Operator pod `ImagePullBackOff` | Operator SA can't pull from `-releases` | Confirm `--set 'mcp-operator.imagePullSecrets[0].name=ghcr-pull-secret'` was passed in Step 5. |
 | `zsh: no matches found: …imagePullSecrets[0]…` | zsh globs the `[0]` in a `--set` flag | Single-quote any `--set` value containing `[ ]`, e.g. `--set 'mcp-operator.imagePullSecrets[0].name=ghcr-pull-secret'`. |
@@ -699,6 +718,9 @@ cut from `main`, so a release built from a `main` that contains the fixes will l
    openshift.scc.enabled=true` plus one grant for the CR-named gateway SA. Once that template is
    released, simplify Step 3 accordingly.
 
-> The `leases.coordination.k8s.io` RBAC for the gateway-service SA is already created by the
-> operator (leader-election Role), so no manual lease grant is needed — provided reconcile
-> completes (i.e. Step 5b is in place).
+> The `leases.coordination.k8s.io` RBAC for the gateway-service SA is created by the operator
+> (the leader-election Role) **only when `spec.controlPlane.leaderElection.enabled: true` with
+> `backend: k8s-lease` is set on the gwsvc** (Step 8 now sets this). It is required even at
+> `replicas: 1` because the CP always runs a provisioner that acquires a lease; without it every
+> MCPGateway hangs in `Creating`. This is correct configuration, not a workaround — no manual
+> lease grant is needed.

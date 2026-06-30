@@ -157,15 +157,15 @@ Export these once in the shell you run the rest of the guide from. `CLUSTER_DOMA
 **auto-derived from the cluster**, so you never hand-type the (long) ingress hostname:
 
 ```bash
-export VERSION=0.0.59                                                     # match the Releases page
+export VERSION=0.0.59                                                     
 export CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
 export CP_TOKEN=$(openssl rand -hex 32)
 export DP_AUTH_TOKEN=$(openssl rand -hex 32)
 export POSTGRES_PASSWORD=$(openssl rand -hex 24)
-export AUTH_TOKEN=$(openssl rand -hex 32)        # client→gateway bearer token
+export AUTH_TOKEN=$(openssl rand -hex 32)        
 
 echo "VERSION=$VERSION"
-echo "CLUSTER_DOMAIN=$CLUSTER_DOMAIN"          # e.g. apps.q29y0q3k.eastus.aroapp.io
+echo "CLUSTER_DOMAIN=$CLUSTER_DOMAIN"         
 echo "CP_TOKEN=$CP_TOKEN"
 echo "DP_AUTH_TOKEN=$DP_AUTH_TOKEN"
 echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"

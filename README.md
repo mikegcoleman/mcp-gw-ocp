@@ -514,32 +514,49 @@ curl -sS -o /dev/null -w "with-token -> HTTP %{http_code}\n" -k -X POST "$GATEWA
 # Expect: 200
 ```
 
-**Gate 2 — the tool actually works through the gateway:**
+**Gate 2 — the tool actually works through the gateway.**
 
-> The data plane replies in MCP streamable-http (a Server-Sent-Events stream: `event:` / `data:`
-> lines), so send `Accept: application/json, text/event-stream` and pull the JSON out of the
-> `data:` frame with `sed -n 's/^data: //p'` before piping to `jq`.
+> Two things to know about talking to the gateway over raw HTTP:
+> - It speaks **MCP streamable-http**: a real MCP client must do the `initialize` →
+>   `notifications/initialized` → `tools/*` handshake, carrying the `Mcp-Session-Id` returned by
+>   `initialize`. A single-shot `tools/list` is rejected (`invalid during session initialization`).
+> - Responses come back as a **Server-Sent-Events** stream (`event:` / `data:` lines), so send
+>   `Accept: application/json, text/event-stream` and extract the JSON with `sed -n 's/^data: //p'`.
+> - Tool names are **server-prefixed**: DuckDuckGo's `search` is exposed as `duckduckgo__search`.
+
+The realistic test is Step 12 — point an MCP client at the gateway and let it drive the handshake.
+For a pure-CLI gate, this script does the handshake by hand:
 
 ```bash
-# DuckDuckGo's search tool should appear:
-curl -sS -k -X POST "$GATEWAY_URL" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
-  -H 'Accept: application/json, text/event-stream' \
+# 1. initialize — capture the session id from the response headers
+SID=$(curl -sS -k -D - -o /dev/null -X POST "$GATEWAY_URL" \
+  -H "Authorization: Bearer $AUTH_TOKEN" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
+echo "session=$SID"
+
+# 2. complete the handshake
+curl -sS -k -o /dev/null -X POST "$GATEWAY_URL" -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+# 3. list tools (expect duckduckgo__search among them)
+curl -sS -k -X POST "$GATEWAY_URL" -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | sed -n 's/^data: //p' | jq '.result.tools[].name'
 
-# Call it and get real results back:
-curl -sS -k -X POST "$GATEWAY_URL" \
-  -H "Authorization: Bearer $AUTH_TOKEN" \
-  -H 'Accept: application/json, text/event-stream' \
+# 4. call it and get real results back
+curl -sS -k -X POST "$GATEWAY_URL" -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","method":"tools/call","id":2,"params":{"name":"search","arguments":{"query":"docker mcp gateway"}}}' \
-  | sed -n 's/^data: //p' | jq .
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"duckduckgo__search","arguments":{"query":"python"}}}' \
+  | sed -n 's/^data: //p' | jq -r '.result.content[].text'
 ```
 
-Search results coming back means **every layer works** — TLS/Route, bearer auth, gateway routing,
-and MCP server invocation. Milestone 1 is done.
+Tool results coming back means **every layer works** — TLS/Route, bearer auth, gateway routing,
+the MCP handshake, and MCP server invocation. Milestone 1 is done.
 
 ## Step 12 — Connect an MCP client
 

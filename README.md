@@ -189,10 +189,12 @@ Postgres password must be re-supplied on every `helm upgrade` (see Upgrading) to
 > If you open a new terminal later, re-run these `export`s (at minimum `VERSION` and
 > `CLUSTER_DOMAIN`) before any step that references them.
 
-## Step 5 — Install the chart from the OCI registry
+## Step 5 — Install the operator and bundled databases (appliance chart)
 
-There is no `helm dependency build` step — the published umbrella chart already bundles its
-subcharts. Install directly from OCI:
+This installs the **`mcp-gateway-appliance` umbrella chart**, which deploys the **`mcp-operator`**
+plus bundled **PostgreSQL** and **Redis** and the umbrella **Secret** — it does **not** deploy the
+gateway itself. The running gateway (control plane + data plane) is created later by the operator
+when you apply the `GatewayServiceConfig` CR in Step 8.
 
 ```bash
 helm install mcp-gateway \

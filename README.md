@@ -273,10 +273,9 @@ oc get clusterrole mcp-gateway-mcp-operator -o yaml | grep finalizers
 
 ```bash
 oc get pods -n mcp-gateway
-oc logs -l app.kubernetes.io/name=mcp-operator -n mcp-gateway --tail=30
 ```
 
-The operator pod starts and idles until a `GatewayServiceConfig` CR is applied. Postgres and
+The operator pod starts but will show `0/1` under `READY` until a `GatewayServiceConfig` CR is applied. Postgres and
 Redis should also reach Running/Ready.
 
 ## Step 7 — Create the gateway-service ServiceAccount

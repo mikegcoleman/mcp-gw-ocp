@@ -394,13 +394,11 @@ If it stays in `Provisioning`, check the operator logs:
 oc logs -l app.kubernetes.io/name=mcp-operator -n mcp-gateway -f
 ```
 
-Verify the CP and DP pods started, and view logs:
+Verify the CP and DP pods started:
 
 ```bash
 oc get pods -l app.kubernetes.io/component=control-plane -n mcp-gateway
 oc get pods -l app.kubernetes.io/component=data-plane -n mcp-gateway
-oc logs -l app.kubernetes.io/component=control-plane -n mcp-gateway -f
-oc logs -l app.kubernetes.io/component=data-plane -c data-plane -n mcp-gateway -f
 ```
 
 ## Step 9 — Create OpenShift Routes
@@ -425,10 +423,10 @@ oc get routes -n mcp-gateway
 ## Step 10 — Verify end-to-end health
 
 ```bash
-CP_HOST="mcp-gw-cp.$CLUSTER_DOMAIN"   # or: oc get route mcp-gw-cp -n mcp-gateway -o jsonpath='{.spec.host}'
+CP_HOST="mcp-gw-cp.$CLUSTER_DOMAIN"   
 
 curl -k https://$CP_HOST/health
-# Expected: {"status":"healthy"} or similar
+# Expected: ok
 
 curl -k -I https://$CP_HOST/api/v1/gateways
 # Expected: 401 Unauthorized (CP API is protected by cpToken)

@@ -233,12 +233,15 @@ Notes:
 ### Step 5b — Apply the operator ClusterRole finalizers workaround  ⚠️ TEMPORARY
 
 > Remove this step once you are on a release whose `mcp-operator` ClusterRole includes
-> `gatewayserviceconfigs/finalizers` (see "Pending upstream fixes").
+> `gatewayserviceconfigs/finalizers` **and** `mcpservers/finalizers` (see "Pending upstream fixes").
 
-The operator's ClusterRole is currently missing the `gatewayserviceconfigs/finalizers`
-permission. Without it, every reconcile fails when the operator tries to set
-`blockOwnerDeletion` on resources it owns (`configmaps "…-cp-config" is forbidden: cannot set
-blockOwnerDeletion …`), and the CR never leaves `Provisioning`. Add it now.
+The operator's ClusterRole is missing the `finalizers` sub-resource for two of its CRDs:
+`gatewayserviceconfigs` and `mcpservers`. Without them, the operator can't set
+`blockOwnerDeletion` on resources it owns, so reconciles fail with
+`... is forbidden: cannot set blockOwnerDeletion if an ownerReference refers to a resource you
+can't set finalizers on`. The result: the `GatewayServiceConfig` never leaves `Provisioning`
+(missing `gatewayserviceconfigs/finalizers`), **and** any `MCPServer` you deploy in Step 11 stays
+`Failed` with no pod (missing `mcpservers/finalizers`). Grant both now.
 
 Open the ClusterRole in an editor:
 
@@ -246,7 +249,7 @@ Open the ClusterRole in an editor:
 oc edit clusterrole mcp-gateway-mcp-operator
 ```
 
-Find the `rules:` section and add the block below as a new list entry (match the indentation of
+Find the `rules:` section and add the block below as new list entries (match the indentation of
 the other `- apiGroups:` entries). It uses **no quotes**, so copy/paste from a PDF can't corrupt
 it the way a JSON one-liner can:
 
@@ -255,6 +258,13 @@ it the way a JSON one-liner can:
   - mcp.docker.com
   resources:
   - gatewayserviceconfigs/finalizers
+  verbs:
+  - update
+  - patch
+- apiGroups:
+  - mcp.docker.com
+  resources:
+  - mcpservers/finalizers
   verbs:
   - update
   - patch
@@ -450,7 +460,10 @@ in-cluster Deployment + Service named `mcp-duckduckgo`:
 
 ```bash
 oc apply -f mcpserver-duckduckgo.yaml
-oc get pods -n mcp-gateway -l app.kubernetes.io/name=mcp-duckduckgo -w   # wait for Running
+
+# The operator reconciles the MCPServer into a Deployment + Service named `mcp-duckduckgo`.
+oc get mcpserver duckduckgo -n mcp-gateway      # PHASE should be Ready (not Failed)
+oc rollout status deploy/mcp-duckduckgo -n mcp-gateway --timeout=120s
 ```
 
 > If the pod won't schedule with an SCC/`runAsNonRoot` error, the image needs root — set
@@ -607,6 +620,7 @@ oc delete pvc -l app.kubernetes.io/component=postgres -n mcp-gateway
 |---|---|---|
 | Operator/Postgres/Redis pod won't schedule (`runAsUser … must be in the ranges …`) | SCC blocking the fixed UID | Grant `nonroot-v2` to the affected SA (Step 3). |
 | `gwsvc` stuck in `Provisioning`; operator logs show `cannot set blockOwnerDeletion` on a ConfigMap | ClusterRole missing `gatewayserviceconfigs/finalizers` | Apply Step 5b. |
+| `MCPServer` PHASE `Failed` / `Degraded`, no `mcp-<name>` pod; operator logs show `cannot set blockOwnerDeletion` on a Deployment | ClusterRole missing `mcpservers/finalizers` | Apply Step 5b (it grants both finalizers). |
 | All `MCPGateway` CRs stuck in `Creating`; CP logs show `leases.coordination.k8s.io "…-provisioner" is forbidden` | Lease RBAC not created for the gateway SA (only happens if reconcile partially failed earlier) | Ensure Step 5b is applied so reconcile completes; the operator then creates the lease Role itself. |
 | CP/DP pods `ImagePullBackOff` | Pull secret missing/not referenced | Confirm `ghcr-pull-secret` exists and the CR lists it under `imagePullSecrets`; re-auth with `read:packages`. |
 | Operator pod `ImagePullBackOff` | Operator SA can't pull from `-releases` | Confirm `--set 'mcp-operator.imagePullSecrets[0].name=ghcr-pull-secret'` was passed in Step 5. |
@@ -676,8 +690,10 @@ create a `dockerhub-pull-secret`, and add
 These two manual steps exist only because the fixes are not yet in a published release. They are
 cut from `main`, so a release built from a `main` that contains the fixes will let you drop them:
 
-1. **`gatewayserviceconfigs/finalizers` ClusterRole grant (Step 5b).** Fix: add the rule to the
-   `mcp-operator` ClusterRole template. Once released, delete Step 5b.
+1. **`gatewayserviceconfigs/finalizers` and `mcpservers/finalizers` ClusterRole grants (Step 5b).**
+   The `mcp-operator` ClusterRole ships `finalizers` for `mcpgateways` and `mcpenvironments` but
+   not for `gatewayserviceconfigs` or `mcpservers`. Fix: add both rules to the ClusterRole
+   template. Once released, delete Step 5b.
 2. **OpenShift SCC grants (Step 3).** A chart-side `openshift.scc.enabled` template (granting
    `nonroot-v2` to the operator and `default` SAs) would reduce Step 3 to a single `--set
    openshift.scc.enabled=true` plus one grant for the CR-named gateway SA. Once that template is

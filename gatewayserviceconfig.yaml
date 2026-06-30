@@ -1,0 +1,80 @@
+# OpenShift Template for the GatewayServiceConfig CR.
+# Apply with `oc process` (built into oc — no envsubst/python needed):
+#
+#   oc process -f gatewayserviceconfig.yaml \
+#     -p VERSION="$VERSION" \
+#     -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
+#     | oc apply -f -
+#
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: mcp-gateway-gwsvc
+parameters:
+  - name: VERSION
+    description: gateway-service image tag, matching your chart release (e.g. 0.0.59)
+    required: true
+  - name: CLUSTER_DOMAIN
+    description: >-
+      Cluster ingress wildcard domain. Get it with:
+      oc get ingresses.config cluster -o jsonpath='{.spec.domain}'
+    required: true
+objects:
+  - apiVersion: mcp.docker.com/v1alpha1
+    kind: GatewayServiceConfig
+    metadata:
+      name: mcp-gw
+      namespace: mcp-gateway
+    spec:
+      version: "${VERSION}"
+      deploymentMode: customer-cloud-k8s
+      image:
+        repository: ghcr.io/docker/mcp-gateway-enterprise-releases/gateway-service
+        pullPolicy: IfNotPresent
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      serviceAccountName: mcp-gw
+      secretsRef:
+        name: mcp-gateway-gateway-service    # <release>-gateway-service (rendered by the chart)
+      # No plugin sidecar: client auth is the gateway's built-in static bearer token.
+      # (Turning the sidecar on later swaps this for IdP auth + unlocks upstream OAuth —
+      # the servers/catalog/gateway below carry over unchanged.)
+      sidecar:
+        enabled: false
+      controlPlane:
+        replicas: 1
+        bootstrapUser: admin
+        # Public DP URL returned to MCP clients; matches the DP Route host (Step 9).
+        dpExternalBasePath: "https://mcp-gw-dp.${CLUSTER_DOMAIN}"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+      dataPlane:
+        replicas: 1
+        # Client→gateway auth: built-in static bearer token (no IdP, no sidecar).
+        # The DP validates `Authorization: Bearer <token>` against MCP_GATEWAY_AUTH_TOKEN.
+        pluginConfig: |
+          plugins:
+            gateway_auth:
+              provider: in-memory
+              implementation: anonymous-desktop-bearer-token
+              config:
+                tenant_id: default
+        # Source the bearer token from the Secret created in Step 4.
+        extraEnv:
+          - name: MCP_GATEWAY_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: mcp-gateway-auth
+                key: auth-token
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 4000m
+            memory: 2Gi

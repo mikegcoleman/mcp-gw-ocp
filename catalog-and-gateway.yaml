@@ -1,0 +1,48 @@
+# Milestone 1 — catalog + environment + gateway.
+#   - ConfigMap:      declares the available MCP servers (here: duckduckgo).
+#   - MCPEnvironment: binds the catalog into the gateway runtime.
+#   - MCPGateway:     activates the named servers and exposes a gateway URL.
+# Apply after the MCPServer pods are Running.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-catalog
+  namespace: mcp-gateway
+data:
+  catalog.yaml: |
+    name: pov-catalog
+    displayName: PoV MCP Catalog
+    registry:
+      duckduckgo:
+        name: duckduckgo
+        title: DuckDuckGo Search
+        description: Public web search — no upstream authentication
+        type: remote
+        remote:
+          url: http://mcp-duckduckgo:8080/mcp
+          transport_type: streamable-http
+        allowHosts:
+          - api.duckduckgo.com:443
+---
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPEnvironment
+metadata:
+  name: pov-env
+  namespace: mcp-gateway
+spec:
+  inlineCatalogs:
+    - configMapRef:
+        name: mcp-catalog
+        key: catalog.yaml
+---
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPGateway
+metadata:
+  name: pov-gateway
+  namespace: mcp-gateway
+spec:
+  environmentRef: pov-env
+  displayName: "PoV Gateway"
+  serverNames:
+    - duckduckgo

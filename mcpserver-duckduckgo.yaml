@@ -1,0 +1,22 @@
+# Milestone 1 — no-auth MCP server: DuckDuckGo public web search.
+# The operator turns this CR into an in-cluster Deployment + Service named
+# `mcp-duckduckgo` (reachable at http://mcp-duckduckgo:8080/mcp), which the
+# catalog points at. No upstream credentials — isolates the client↔gateway path.
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPServer
+metadata:
+  name: duckduckgo
+  namespace: mcp-gateway
+spec:
+  image: docker.io/mikegcoleman/demo-mcp-duckduckgo:latest
+  port: 8080
+  transport: streamable
+  env:
+    - name: MCP_TRANSPORT
+      value: "http"
+    - name: FASTMCP_HOST
+      value: "0.0.0.0"
+  # runAsNonRoot defaults to true — works under the nonroot-v2 SCC granted to the
+  # `default` SA in Step 3. If this image turns out to require root, set
+  # `runAsNonRoot: false` here and grant anyuid:
+  #   oc adm policy add-scc-to-user anyuid -z default -n mcp-gateway

@@ -382,10 +382,10 @@ oc process -f gatewayserviceconfig.yaml \
 > CR on stdout; `oc apply -f -` reads it from there. Values pass as `-p KEY=VALUE`, so there's
 > nothing to quote-escape or smart-quote.
 
-Watch the operator provision CP and DP:
+Watch the operator provision CP and DP move from `Provisioning` to `Healthy` state:
 
 ```bash
-oc get gwsvc mcp-gw -n mcp-gateway -w     # Provisioning → Healthy
+oc get gwsvc mcp-gw -n mcp-gateway -w     
 ```
 
 If it stays in `Provisioning`, check the operator logs:

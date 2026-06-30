@@ -598,42 +598,6 @@ preset's OAuth lane isn't implemented yet, so that path needs a custom delegator
 
 ---
 
-## Upgrading
-
-### Chart values or operator version
-
-Re-supply `postgres.auth.password` on every upgrade — it is a generated secret, not a static
-Helm value, so `--reuse-values` does not persist it:
-
-```bash
-helm upgrade mcp-gateway \
-  oci://ghcr.io/docker/mcp-gateway-enterprise-releases/charts/mcp-gateway-appliance \
-  --version 0.0.60 \
-  --namespace mcp-gateway \
-  --reuse-values \
-  --set postgres.auth.password="$POSTGRES_PASSWORD"
-```
-
-### CRDs
-
-Helm never auto-upgrades CRDs on `helm upgrade`. Because you have no local chart, pull the
-`mcp-operator` chart from OCI and apply its CRDs whenever the schema changes:
-
-```bash
-helm pull oci://ghcr.io/docker/mcp-gateway-enterprise-releases/charts/mcp-operator \
-  --version 0.0.60 --untar
-oc apply -f mcp-operator/crds/
-```
-
-### Gateway-service version
-
-Patch the CR; the operator rolls the Deployment:
-
-```bash
-oc patch gwsvc mcp-gw -n mcp-gateway --type=merge \
-  -p '{"spec":{"version":"0.0.60"}}'
-```
-
 ## Uninstalling
 
 ```bash

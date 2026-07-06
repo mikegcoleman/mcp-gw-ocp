@@ -1,0 +1,22 @@
+# Milestone 2 — GitHub MCP server (per-user credential delegation).
+# Deployed as an MCPServer CR (same pattern as the DuckDuckGo server from Milestone 1);
+# the operator creates a Deployment + Service named `mcp-github` at
+# http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp.
+#
+# No token is set on this pod: the gateway injects each caller's PAT at request time
+# (catalog entry has `auth_delegation: gateway` → the Entra sidecar's
+# get_connection_headers returns the user's `github-pat-<oid>` from Key Vault).
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPServer
+metadata:
+  name: github
+  namespace: mcp-gateway
+spec:
+  image: REPLACE_WITH_YOUR_REGISTRY/mcp-github:latest
+  args: ["http", "--port", "8080"]
+  port: 8080
+  transport: streamable
+  # The upstream github-mcp-server binary runs as root, so it needs the anyuid SCC
+  # granted to the `default` SA (see the sidecar guide's SCC step). If you rebuild the
+  # image to run non-root (add a USER directive), set this true and drop the anyuid grant.
+  runAsNonRoot: false

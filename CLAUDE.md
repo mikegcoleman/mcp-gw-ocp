@@ -21,12 +21,11 @@ This is *not* the gateway source. The product lives elsewhere:
 - **Client→gateway auth = a single static bearer token, no IdP, no sidecar.**
 - **One no-auth MCP server (DuckDuckGo)** reachable through the gateway, behind a verification gate.
 
-**Milestone 2 (documented as "what's next", not yet built):** per-user upstream credentials
-(e.g. per-user GitHub PATs) via the **preset plugin sidecar** (`preset-plugin-sidecar`) plus an
-**IdP** (the preset supports Okta/Auth0/Entra/Keycloak; Entra is the natural fit on Azure). The
-preset `credentials` file backend maps `(principal_id, server)` → headers. Note: the preset's
-**upstream-OAuth lane is not implemented**, so brokering OAuth-protected upstreams needs a custom
-delegator — out of scope here.
+**Milestone 2 (built — see [`docs/sidecar-entra.md`](docs/sidecar-entra.md)):** per-user identity
+(Entra ID JWTs) + per-user upstream credentials (per-user GitHub PATs from Azure Key Vault),
+delivered with the **Entra sidecar** (source under `sidecar/`) — a FastMCP server that speaks MCP
+over HTTP, runs as its own Deployment, and is wired into the data plane via `dataPlane.pluginConfig`.
+See the dedicated Milestone 2 section below.
 
 ## Deployment architecture (two-phase, operator-driven)
 
@@ -95,8 +94,7 @@ plugins:
 ```
 The DP validates `Authorization: Bearer <token>` (timing-safe) against `MCP_GATEWAY_AUTH_TOKEN`,
 injected from the `mcp-gateway-auth` Secret via `spec.dataPlane.extraEnv`. This is a **single
-shared identity** — there is no per-user distinction without an IdP (that's Milestone 2). The
-preset sidecar's `gateway_auth` is IdP-JWT-only and has **no static-bearer mode**.
+shared identity** — per-user identity requires an IdP, which Milestone 2 adds.
 
 ## Critical gotchas (the battle-tested list — read before answering deployment questions)
 
@@ -155,6 +153,50 @@ A release built from a `main` that contains these lets you drop the manual steps
 - A chart-side `openshift.scc.enabled` template granting `nonroot-v2` → simplifies Step 3.
 - (Leader-election lease RBAC is *not* a bug — it's correct config once `leaderElection` is set.)
 
+## Milestone 2 — Entra ID auth + per-user credentials (custom sidecar)
+
+Full guide: [`docs/sidecar-entra.md`](docs/sidecar-entra.md) (Azure prereqs: [`docs/azure-setup.md`](docs/azure-setup.md)).
+Purely additive on top of Milestone 1 — does not re-create the namespace/operator/gateway/DuckDuckGo.
+
+**Components added:** the Entra sidecar (`sidecar/`, a FastMCP server serving MCP over **HTTP** on
+`:8080/mcp`, deployed standalone via `manifests/sidecar-deployment.yaml` → Service
+`mcp-entra-sidecar`), and a GitHub `MCPServer` (`mcpserver-github.yaml` → Service `mcp-github`,
+same operator-managed pattern as M1's DuckDuckGo).
+
+**Sidecar tools:** `authenticate` (validate Entra JWT → principal, `id` = the token's `oid`),
+`get_connection_headers` (look up `<server>-pat-<oid>` in Key Vault → `Authorization` header),
+`record-*` (telemetry stubs), `oauth-*` (broker — future phase, present in source, out of scope).
+
+**Key Vault secret naming:** `{server_name}-pat-{oid}`, e.g. `github-pat-<oid>`. RBAC-mode vault;
+the SP needs `Key Vault Secrets User`.
+
+**Required sidecar env** (source: `sidecar/server.py:40-45`; crashes if absent): `ENTRA_TENANT_ID`,
+`ENTRA_AUDIENCE` (= app **client ID**, not the `api://` URI — v2 tokens put client_id in `aud`),
+`ENTRA_CLIENT_ID`, `GATEWAY_RESOURCE`, `AZURE_KEYVAULT_URL`; plus `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/
+`AZURE_CLIENT_SECRET` (consumed by the Azure SDK, from the `azure-sp-credentials` Secret).
+Optional: `ENTRA_RESOURCE_URI`, `MCP_GATEWAY_STORE_TYPE` (`kv`/`local`/`auto`), `MCP_GATEWAY_OAUTH_*`.
+
+**The wiring (the crux):** with `spec.dataPlane.sidecar.enabled: false` (sidecar runs standalone,
+not operator-injected), set `spec.dataPlane.pluginConfig` to point `gateway_auth` + the credential
+delegator at the sidecar URL:
+```yaml
+plugins:
+  gateway_auth: { provider: mcp, server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp" }
+auth_delegators:
+  - { name: entra-sidecar, strategy: remote, provider: mcp, server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp" }
+auth_delegation:
+  defaults: { remote: entra-sidecar }
+```
+Re-wiring the gwsvc from M1's bearer plugin to this **replaces** client auth: after it, requests
+need an Entra JWT (the M1 static bearer no longer works). Catalog entries with
+`auth_delegation: gateway` (e.g. `github`) trigger the per-user PAT injection; DuckDuckGo stays
+plain (public).
+
+**M2-specific gotchas:** GitHub upstream runs as **root** → `mcpserver-github.yaml` sets
+`runAsNonRoot: false` and needs `anyuid` on the `default` SA (additive to M1's `nonroot-v2`);
+the sidecar has `readOnlyRootFilesystem: true` so it mounts writable `/tmp` + `/.cache` emptyDirs;
+build the sidecar + GitHub images **multi-arch** (amd64) for OCP nodes.
+
 ## Working in this repo
 
 - Edit `README.md` (the guide) directly; it is the source of truth and renders on GitHub.
@@ -166,7 +208,7 @@ A release built from a `main` that contains these lets you drop the manual steps
 
 ## References
 
-- Customer user guide: the `docs-user-guide/` in `docker/mcp-gateway-enterprise-releases`
-  (plugin-sidecar, preset-plugin-sidecar, preset-credential-backends, operator-reference).
+- Gateway artifacts + operator reference: the `docs-user-guide/` in the release repo
+  (`mcp-gateway-enterprise-releases`) the gateway is installed from.
 - Provisioning a compatible cluster: ARO (`az aro create`, amd64 nodes, ≥44 Dsv3 vCPUs, default
   `managed-csi` StorageClass, built-in Routes) satisfies every prerequisite the guide assumes.

@@ -579,22 +579,24 @@ Cursor MCP settings), use the `GATEWAY_URL` from Step 11b and the `AUTH_TOKEN` f
 > full access to the gateway. Rotate by updating the `mcp-gateway-auth` Secret and re-applying
 > the CR (the operator rolls the DP to pick up the new value).
 
-## What's next — Milestone 2 (per-user credentials + IdP)
+## What's next — Milestone 2 (per-user credentials + Entra ID)
 
-Milestone 1 gives you one shared identity. The richer demo — multiple users sharing one gateway
-URL, each getting **their own** upstream credentials (e.g. per-user GitHub PATs), with **no token
-in the client config** — is **Milestone 2**. It uses the **preset plugin sidecar** (the supported
-plugin architecture, not a custom one):
+Milestone 1 gives you one shared identity. **Milestone 2** adds real per-user identity and
+per-user upstream credentials: multiple users share one gateway URL, each authenticates with
+their corporate **Entra ID** account, and the gateway injects *their* GitHub PAT (from Azure Key
+Vault) when calling the GitHub MCP server — with **no token in the client config** beyond the
+user's JWT.
 
-- `gateway_auth` lane backed by an **IdP** (the preset supports Okta, Auth0, **Entra**, Keycloak)
-  — this is what supplies a real per-user `principal_id`. On Azure, Entra is the natural choice.
-- `credentials` lane (file backend) mapping `(principal_id, server)` → per-user `Authorization`
-  headers, with the secret values mounted from K8s Secrets.
+**→ Full walkthrough: [docs/sidecar-entra.md](docs/sidecar-entra.md).**
 
-Everything from Milestone 1 (servers, catalog, gateway, Routes, tests) carries over unchanged —
-Milestone 2 swaps the `dataPlane.pluginConfig`/`sidecar` block and adds the IdP. Upstream-OAuth
-MCP servers (where the *end user* must OAuth to the backend) are a separate, later step — the
-preset's OAuth lane isn't implemented yet, so that path needs a custom delegator for now.
+It's purely additive — everything from Milestone 1 (operator, gateway, DuckDuckGo, Routes,
+namespace, SCC grants) carries over. Milestone 2 deploys the **Entra sidecar** (a FastMCP server
+that validates Entra JWTs and delegates per-user credentials from Key Vault), adds a GitHub
+`MCPServer`, and re-wires the gateway's `dataPlane.pluginConfig` from the bearer plugin to the
+sidecar.
+
+> Servers that require the *end user* to complete an OAuth flow against the backend itself are a
+> later step, not covered here.
 
 ---
 

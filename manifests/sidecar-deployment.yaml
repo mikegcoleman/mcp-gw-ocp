@@ -1,0 +1,128 @@
+# Entra ID Authentication Sidecar — OpenShift Deployment
+#
+# Before applying:
+#   1. Replace every PLACEHOLDER_* value (see docs/openshift-deployment.md Step 4)
+#   2. Create the azure-sp-credentials Secret (docs/openshift-deployment.md Step 3)
+#
+# Apply:
+#   oc apply -f manifests/sidecar-deployment.yaml
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-entra-sidecar
+  namespace: mcp-gateway
+  labels:
+    app: mcp-entra-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-entra-sidecar
+  template:
+    metadata:
+      labels:
+        app: mcp-entra-sidecar
+    spec:
+      containers:
+        - name: sidecar
+          image: PLACEHOLDER_IMAGE   # e.g. registry.example.com/mcp-gateway/mcp-entra-sidecar:latest
+          imagePullPolicy: Always
+          ports:
+            - name: mcp
+              containerPort: 8080
+          env:
+            # ── Entra JWT validation ─────────────────────────────────────────
+            - name: ENTRA_TENANT_ID
+              value: "PLACEHOLDER_TENANT_ID"       # Directory (tenant) ID from Azure
+            - name: ENTRA_AUDIENCE
+              value: "PLACEHOLDER_CLIENT_ID"       # Application (client) ID — v2.0 tokens use this as aud
+            - name: ENTRA_CLIENT_ID
+              value: "PLACEHOLDER_CLIENT_ID"       # Same value as ENTRA_AUDIENCE
+            - name: ENTRA_RESOURCE_URI
+              value: "PLACEHOLDER_RESOURCE_URI"    # e.g. api://mcp-gateway
+            - name: GATEWAY_RESOURCE
+              value: "PLACEHOLDER_GATEWAY_URL"     # e.g. https://mcp-gw.example.com
+
+            # ── Azure Key Vault access ───────────────────────────────────────
+            - name: AZURE_KEYVAULT_URL
+              value: "PLACEHOLDER_KEYVAULT_URL"    # e.g. https://mcp-gateway-kv.vault.azure.net/
+            - name: MCP_GATEWAY_STORE_TYPE
+              value: "kv"
+
+            # Service principal credentials — sourced from the azure-sp-credentials Secret.
+            # Create the secret first: see docs/openshift-deployment.md Step 3.
+            - name: AZURE_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: azure-sp-credentials
+                  key: AZURE_TENANT_ID
+            - name: AZURE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: azure-sp-credentials
+                  key: AZURE_CLIENT_ID
+            - name: AZURE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: azure-sp-credentials
+                  key: AZURE_CLIENT_SECRET
+
+            # ── OAuth broker (future phase — leave commented out for now) ────
+            # - name: MCP_GATEWAY_OAUTH_PORT
+            #   value: "5555"
+            # - name: MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL
+            #   value: "https://PLACEHOLDER_GATEWAY_URL/oauth"
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 200m
+              memory: 192Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          # readOnlyRootFilesystem is on, so give the process writable scratch dirs —
+          # uvicorn/httpx/the Azure SDK write temp + cache files. Without these the
+          # sidecar can fail at startup or on first Key Vault call.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /.cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-entra-sidecar
+  namespace: mcp-gateway
+spec:
+  selector:
+    app: mcp-entra-sidecar
+  ports:
+    - name: mcp
+      port: 8080
+      targetPort: 8080

@@ -49,14 +49,21 @@ and **no `gateway-service` subchart**.
 
 | File | What it is |
 |------|-----------|
-| `README.md` | The install guide (source of truth; ~12 steps + appendix + troubleshooting). |
-| `gatewayserviceconfig.yaml` | OpenShift **Template** for the GatewayServiceConfig CR. Apply with `oc process -f … -p VERSION=… -p CLUSTER_DOMAIN=… \| oc apply -n mcp-gateway -f -`. Contains the no-sidecar bearer-auth config. |
-| `mcpserver-duckduckgo.yaml` | MCPServer CR — DuckDuckGo no-auth server (`docker.io/mikegcoleman/demo-mcp-duckduckgo:latest`, multi-arch). |
-| `catalog-and-gateway.yaml` | Catalog ConfigMap (`mcp-catalog`) + MCPEnvironment (`pov-env`) + MCPGateway (`pov-gateway`). |
-| `finalizers-fix.patch` | Throwaway artifact from a git reconcile; not part of the deploy. |
+| `README.md` | The install guide — Milestone 1 (source of truth; ~12 steps + appendix + troubleshooting). |
+| `CLAUDE.md` | This file — agent reference. |
+| `gatewayserviceconfig.yaml` | OpenShift **Template** for the GatewayServiceConfig CR. Apply with `oc process -f … -p VERSION=… -p CLUSTER_DOMAIN=… \| oc apply -n mcp-gateway -f -`. Contains the no-sidecar bearer-auth config (M1). |
+| `mcpserver-duckduckgo.yaml` | M1 MCPServer CR — DuckDuckGo no-auth server (`docker.io/mikegcoleman/demo-mcp-duckduckgo:latest`, multi-arch). |
+| `catalog-and-gateway.yaml` | M1 catalog ConfigMap (`mcp-catalog`) + MCPEnvironment (`pov-env`) + MCPGateway (`pov-gateway`). |
+| `docs/sidecar-entra.md` | Milestone 2 guide (Entra auth + per-user Key Vault creds), continues from the README. |
+| `docs/azure-setup.md` | M2 Azure prerequisites (Portal steps + a scripted `az` CLI appendix). |
+| `mcpserver-github.yaml` | M2 MCPServer CR — GitHub server (per-user PAT injection; `auth_delegation: gateway`). |
+| `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — the one standalone component. |
+| `sidecar/` | M2 Entra sidecar source (Python/FastMCP) + Dockerfile. |
+| `servers/github/` | M2 GitHub MCP server Dockerfile (builds `github/github-mcp-server` from upstream). |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
-CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`.
+CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
+were run end-to-end on a fresh ARO cluster.
 
 ## Resource names used by the guide
 
@@ -70,6 +77,7 @@ CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`
 | Bearer-token Secret | `mcp-gateway-auth` (key `auth-token`) → DP env `MCP_GATEWAY_AUTH_TOKEN` |
 | Umbrella Secret (chart-rendered) | `mcp-gateway-gateway-service` (`<release>-gateway-service`) |
 | MCPServer / catalog / env / gateway | `duckduckgo` / `mcp-catalog` / `pov-env` / `pov-gateway` |
+| M2: Entra sidecar (svc) / GitHub MCPServer (svc) / SP-creds Secret | `mcp-entra-sidecar` / `github`→`mcp-github` / `azure-sp-credentials` |
 
 ## Artifact model (how things are pulled)
 
@@ -192,10 +200,30 @@ need an Entra JWT (the M1 static bearer no longer works). Catalog entries with
 `auth_delegation: gateway` (e.g. `github`) trigger the per-user PAT injection; DuckDuckGo stays
 plain (public).
 
-**M2-specific gotchas:** GitHub upstream runs as **root** → `mcpserver-github.yaml` sets
-`runAsNonRoot: false` and needs `anyuid` on the `default` SA (additive to M1's `nonroot-v2`);
-the sidecar has `readOnlyRootFilesystem: true` so it mounts writable `/tmp` + `/.cache` emptyDirs;
-build the sidecar + GitHub images **multi-arch** (amd64) for OCP nodes.
+**M2 deploy gotchas:**
+- GitHub upstream runs as **root** → `mcpserver-github.yaml` sets `runAsNonRoot: false` and needs
+  `anyuid` on the `default` SA (additive to M1's `nonroot-v2`).
+- The sidecar has `readOnlyRootFilesystem: true`, so it mounts writable `/tmp` + `/.cache` emptyDirs.
+- Build the sidecar + GitHub images **amd64** for OCP nodes (locally multi-arch, or on-cluster via
+  `oc new-build --binary --strategy=docker` — see the guide's Step 1B; there's no usable local
+  Docker in some environments).
+- **Catalog changes need a CP restart.** Adding `github` to the catalog ConfigMap does nothing
+  until `oc rollout restart deploy/mcp-gw-cp` (the CP reads the catalog file at startup).
+
+**Why the sidecar source looks the way it does (run-2 fixes — do NOT "simplify" these away):**
+- `servers/github/Dockerfile` pins `golang:1.25-alpine` — upstream `github-mcp-server` needs Go ≥1.25;
+  older tags fail the build.
+- `sidecar/requirements.txt` pins `fastmcp>=3.4,<4` **and** `server.py` calls
+  `mcp.http_app(path="/mcp", host_origin_protection=False)` — current FastMCP's DNS-rebinding
+  protection otherwise rejects the gateway's in-cluster Service-DNS Host with **HTTP 421** and the
+  DP CrashLoopBackOffs.
+- `authenticate` sets a **top-level `tenant_id`** (default `default`, override `GATEWAY_TENANT_ID`) —
+  the DP's tenant guard rejects a principal whose tenant doesn't match the gateway's (`404
+  gateway_not_found`).
+- `get_connection_headers` accepts extra `headers`/`method`/`path` kwargs the gateway sends —
+  FastMCP strict-schema validation rejects unknown keys, which makes credential injection fail
+  **silently** (upstream then 401s and its tools never appear). This is the AGENTS.md
+  "strict-schema delegator" hazard; any custom delegator must tolerate extra kwargs.
 
 ## Working in this repo
 

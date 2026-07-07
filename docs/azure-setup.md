@@ -24,7 +24,7 @@ their JWTs), and the sidecar itself uses its credentials to access Key Vault.
 
 Record the **Application (client) ID** and **Directory (tenant) ID** from the overview page.
 
-### 1b. Set the Application ID URI
+### 1b. Set the Application ID URI and add a delegated scope
 
 1. In the app registration, go to **Expose an API**
 2. Click **Set** next to Application ID URI
@@ -32,6 +32,19 @@ Record the **Application (client) ID** and **Directory (tenant) ID** from the ov
 4. Click **Save**
 
 Record the Application ID URI — this is `ENTRA_RESOURCE_URI`.
+
+Now add a **delegated scope** on the same page (required — clients acquire *delegated* user
+tokens against this scope, and §1e's pre-authorization references it):
+
+5. Click **Add a scope**
+6. Scope name: `access_as_user`
+7. Who can consent: **Admins and users**
+8. Fill in the consent display names/descriptions (e.g. "Access the MCP Gateway")
+9. State: **Enabled**, click **Add scope**
+
+> **App role vs. scope:** §1c below adds an *app role* (`MCPGateway.User`, an authorization
+> label in the `roles` claim). This scope (`access_as_user`) is what makes *delegated* token
+> acquisition work at all. You need both.
 
 ### 1c. Add an app role
 
@@ -58,15 +71,25 @@ The sidecar validates v2.0 tokens. You must set this explicitly.
 
 ### 1e. Pre-authorize your MCP client
 
-If you are using **VS Code Copilot**, add its public client ID to the authorized client
-applications list so users are not prompted for admin consent:
+Add your client's public client ID to the authorized client applications so users are not
+prompted for admin consent.
 
+**VS Code Copilot:**
 1. Go to **Expose an API → Add a client application**
 2. Client ID: `aebc6443-996d-45c2-90f0-388ff96faa56` (VS Code)
-3. Authorized scopes: check the scope you created
+3. Authorized scopes: check **`access_as_user`** (created in §1b)
 4. Click **Add application**
 
 For other clients, obtain their client ID and add them here in the same way.
+
+> **Testing from the CLI (`az account get-access-token`)?** The Azure CLI is a *separate* client
+> (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`). Out of the box, requesting a token for your API with
+> it fails with `AADSTS65001` (no consent). To use the CLI test in the deployment guide's Step 8
+> you must also: (a) ensure the `access_as_user` scope exists (§1b), (b) make sure the Azure CLI
+> service principal exists in your tenant, and (c) grant consent for it. The scripted setup in the
+> **CLI alternative** appendix does all three; via the Portal, add `04b07795-8ddb-461a-bbee-02f9e1bf7b46`
+> as an authorized client application (step above) with the `access_as_user` scope and grant admin
+> consent. For the normal VS Code Copilot flow this is not needed.
 
 ### 1f. Create a client secret
 
@@ -175,3 +198,76 @@ Collect these before moving to OpenShift deployment.
 > Note that **Tenant ID** and **client ID** each appear as two environment variables —
 > once for the Entra JWT validation path and once for the Azure SDK credential path.
 > They carry the same values.
+
+---
+
+## Appendix — CLI alternative (`az`)
+
+The scripted equivalent of everything above. This is the exact sequence validated against a live
+tenant, and it wires up the delegated scope + Azure CLI consent so the Step 8 token test works.
+Requires `az login` with **Application Administrator** (Entra) and **Contributor** on the subscription.
+
+```bash
+# ---- inputs ----
+APP_NAME=mcp-gateway
+KV=mcp-gw-kv-$RANDOM                 # must be globally unique, 3-24 chars
+RG=<your-resource-group>            # e.g. the ARO resource group
+LOC=<your-region>                   # e.g. eastus
+AZCLI=04b07795-8ddb-461a-bbee-02f9e1bf7b46   # Microsoft Azure CLI public client (for CLI token test)
+
+TENANT=$(az account show --query tenantId -o tsv)
+
+# ---- 1a-1c: app registration + identifier URI + app role ----
+APPID=$(az ad app create --display-name "$APP_NAME" --sign-in-audience AzureADMyOrg --query appId -o tsv)
+OBJID=$(az ad app show --id "$APPID" --query id -o tsv)
+az ad app update --id "$APPID" --identifier-uris "api://$APPID"
+ROLE_ID=$(cat /proc/sys/kernel/random/uuid)
+az ad app update --id "$APPID" --app-roles "[{\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Gateway User\",\"description\":\"Allows access to the MCP Gateway\",\"value\":\"MCPGateway.User\",\"id\":\"$ROLE_ID\",\"isEnabled\":true}]"
+
+# ---- 1b: delegated scope 'access_as_user' + 1d: v2 tokens ----
+SCOPE_ID=$(cat /proc/sys/kernel/random/uuid)
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
+  --headers "Content-Type=application/json" \
+  --body "{\"api\":{\"requestedAccessTokenVersion\":2,\"oauth2PermissionScopes\":[{\"id\":\"$SCOPE_ID\",\"adminConsentDisplayName\":\"Access the MCP Gateway\",\"adminConsentDescription\":\"Access the MCP Gateway as the user\",\"value\":\"access_as_user\",\"type\":\"User\",\"isEnabled\":true}]}}"
+
+# ---- 1e: pre-authorize VS Code + Azure CLI clients for the scope ----
+VSCODE=aebc6443-996d-45c2-90f0-388ff96faa56
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
+  --headers "Content-Type=application/json" \
+  --body "{\"api\":{\"preAuthorizedApplications\":[{\"appId\":\"$VSCODE\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]},{\"appId\":\"$AZCLI\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]}]}}"
+
+# ---- 1f: client secret / 1g: service principal + self role assignment ----
+SECRET=$(az ad app credential reset --id "$APPID" --display-name sidecar --years 1 --query password -o tsv)
+SP_OID=$(az ad sp create --id "$APPID" --query id -o tsv)
+MY_OID=$(az ad signed-in-user show --query id -o tsv)
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/users/$MY_OID/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$MY_OID\",\"resourceId\":\"$SP_OID\",\"appRoleId\":\"$ROLE_ID\"}"
+
+# ---- consent so `az account get-access-token` works (Step 8 test) ----
+AZCLI_SP=$(az ad sp show --id "$AZCLI" --query id -o tsv 2>/dev/null || az ad sp create --id "$AZCLI" --query id -o tsv)
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
+  --headers "Content-Type=application/json" \
+  --body "{\"clientId\":\"$AZCLI_SP\",\"consentType\":\"AllPrincipals\",\"resourceId\":\"$SP_OID\",\"scope\":\"access_as_user\"}"
+
+# ---- 2: Key Vault (RBAC) + role grants ----
+az keyvault create -n "$KV" -g "$RG" -l "$LOC" --enable-rbac-authorization true
+KV_ID=$(az keyvault show -n "$KV" --query id -o tsv)
+az role assignment create --assignee "$SP_OID" --role "Key Vault Secrets User"   --scope "$KV_ID"
+az role assignment create --assignee "$MY_OID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
+
+# ---- 3: store a user's GitHub PAT (must be a VALID token with the scopes the tools need) ----
+az keyvault secret set --vault-name "$KV" --name "github-pat-$MY_OID" --value "<the-users-github-PAT>"
+
+# ---- values to record ----
+echo "ENTRA_TENANT_ID / AZURE_TENANT_ID = $TENANT"
+echo "ENTRA_CLIENT_ID / ENTRA_AUDIENCE / AZURE_CLIENT_ID = $APPID"
+echo "ENTRA_RESOURCE_URI = api://$APPID"
+echo "AZURE_KEYVAULT_URL = https://$KV.vault.azure.net/"
+echo "AZURE_CLIENT_SECRET = $SECRET   # shown once"
+```
+
+> Key Vault RBAC role assignments take ~1-2 minutes to propagate before the secret-set / sidecar
+> reads succeed. The `github-pat-<oid>` secret value must be a **valid** GitHub token with the
+> scopes the GitHub MCP tools need — an expired/placeholder token yields `401 Bad credentials`
+> from GitHub even though injection is working.

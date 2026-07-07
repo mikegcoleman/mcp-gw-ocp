@@ -135,6 +135,10 @@ def authenticate(headers: dict, method: str = "", path: str = "") -> dict:
             "id": principal_id,
             "type": "user",
             "auth_method": "entra_oidc",
+            # Top-level tenant_id must match the MCPGateway's tenant or the data plane's
+            # tenant guard rejects the request (404 gateway_not_found). Gateways created
+            # without an explicit tenant are tenant "default"; override via GATEWAY_TENANT_ID.
+            "tenant_id": os.environ.get("GATEWAY_TENANT_ID", "default"),
             "roles": claims.get("roles", []),
             "metadata": {
                 "tenant_id": claims.get("tid"),
@@ -156,6 +160,13 @@ async def get_connection_headers(
     server_url: str = "",
     client_id: str = "",
     scopes: list | None = None,
+    # The gateway also sends the inbound request's headers/method/path. FastMCP uses
+    # strict-schema validation (additionalProperties: false), so these MUST be accepted
+    # here or the whole call is rejected and credential injection fails *silently*
+    # (the upstream then gets no auth → 401 → its tools never appear). Accept and ignore.
+    headers: dict | None = None,
+    method: str = "",
+    path: str = "",
 ) -> dict:
     """Look up the caller's per-server credential in Key Vault.
 
@@ -283,7 +294,11 @@ async def healthz(_: Request) -> Response:
 
 
 def build_app() -> Starlette:
-    mcp_asgi = mcp.http_app(path="/mcp")
+    # host_origin_protection disabled: the gateway reaches this sidecar over the in-cluster
+    # Kubernetes Service DNS name, which FastMCP's default DNS-rebinding protection would reject
+    # with HTTP 421 (Misdirected Request). Safe here — the sidecar is only reachable on the pod
+    # network, not exposed via a Route.
+    mcp_asgi = mcp.http_app(path="/mcp", host_origin_protection=False)
     app = Starlette(
         routes=[
             Route("/.well-known/oauth-protected-resource", protected_resource_metadata),

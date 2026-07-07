@@ -37,12 +37,17 @@ gateway's `dataPlane.pluginConfig`** from the bearer plugin to the sidecar (Step
 
 ## Step 1 — Build and push the sidecar + GitHub server images
 
-Build for **`linux/amd64`** (OpenShift/ARO nodes are amd64). If you build on Apple Silicon,
-build multi-arch or the pull fails on the cluster with
-`no image found in image index for architecture "amd64"`:
+Two build options. Use **1A** if you have a local Docker with buildx; use **1B** to build on the
+cluster (no local Docker needed — recommended, and it guarantees the correct node architecture).
+
+Either way the images must be **`linux/amd64`** (OpenShift/ARO nodes are amd64). A single-arch
+arm64 image (e.g. built on Apple Silicon without `--platform`) fails the pull on the cluster with
+`no image found in image index for architecture "amd64"`.
+
+### Option 1A — local Docker (multi-arch)
 
 ```bash
-export REGISTRY=<your-registry>   # e.g. an external registry your cluster can pull from
+export REGISTRY=<your-registry>   # a registry your cluster can pull from
 
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t $REGISTRY/mcp-entra-sidecar:latest --push sidecar/
@@ -51,6 +56,25 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t $REGISTRY/mcp-github:latest --push servers/github/
 ```
+
+### Option 1B — build on the cluster with OpenShift BuildConfig (no local Docker)
+
+Builds run on amd64 nodes and push to the cluster's internal registry. The deployment manifests
+then reference `image-registry.openshift-image-registry.svc:5000/mcp-gateway/<name>:latest`.
+
+```bash
+# Sidecar
+oc new-build --binary --strategy=docker --name=mcp-entra-sidecar -n mcp-gateway
+oc start-build mcp-entra-sidecar --from-dir=sidecar -n mcp-gateway --follow
+
+# GitHub MCP server (clones upstream at build time)
+oc new-build --binary --strategy=docker --name=mcp-github -n mcp-gateway
+oc start-build mcp-github --from-dir=servers/github -n mcp-gateway --follow
+```
+
+With Option 1B, set the image fields in later steps to
+`image-registry.openshift-image-registry.svc:5000/mcp-gateway/mcp-entra-sidecar:latest` and
+`.../mcp-github:latest`.
 
 (DuckDuckGo was already built and deployed in Milestone 1 — nothing to do for it here.)
 
@@ -143,11 +167,14 @@ Edit the Milestone 1 catalog (`catalog-and-gateway.yaml`) to add a `github` regi
     - github
 ```
 
-Re-apply:
+Re-apply, then **restart the control plane** — it reads the catalog file at startup, so a changed
+catalog ConfigMap is not picked up until the CP rolls:
 
 ```bash
 oc apply -f catalog-and-gateway.yaml
-oc get mcpgw pov-gateway -n mcp-gateway -w      # wait for Active
+oc rollout restart deploy/mcp-gw-cp -n mcp-gateway    # required: CP re-reads the catalog
+oc rollout status deploy/mcp-gw-cp -n mcp-gateway
+oc get mcpgw pov-gateway -n mcp-gateway -w            # wait for Active
 ```
 
 ## Step 7 — Re-wire the gateway from bearer auth to the Entra sidecar
@@ -203,12 +230,19 @@ oc rollout status deploy/mcp-gw-dp -n mcp-gateway
 ## Step 8 — Verify end-to-end
 
 Get an Entra JWT for a user who has the gateway app role assigned (and, for the GitHub test, a
-`github-pat-<their-oid>` secret in Key Vault):
+`github-pat-<their-oid>` secret in Key Vault). Request the token against the **delegated scope**
+(`access_as_user`), using the app's client-id URI:
 
 ```bash
-TOKEN=$(az account get-access-token --resource api://mcp-gateway --query accessToken -o tsv)
+APPID=<your-app-client-id>   # the Application (client) ID
+TOKEN=$(az account get-access-token --scope "api://$APPID/access_as_user" --query accessToken -o tsv)
 GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.endpoints.sk}')
 ```
+
+> If this returns `AADSTS65001` (consent), the Azure CLI client isn't authorized for your API yet
+> — see the "Testing from the CLI" note in [`azure-setup.md`](azure-setup.md) §1e (or just run the
+> CLI-alternative appendix there, which grants it). This only affects the CLI test; real MCP
+> clients (VS Code Copilot) use their own pre-authorized client.
 
 The gateway speaks MCP streamable-http, so do the handshake (`initialize` → keep the
 `Mcp-Session-Id` → `notifications/initialized` → call tools), send the SSE `Accept` header, and

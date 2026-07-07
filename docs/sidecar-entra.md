@@ -231,11 +231,11 @@ oc rollout status deploy/mcp-gw-dp -n mcp-gateway
 
 Get an Entra JWT for a user who has the gateway app role assigned (and, for the GitHub test, a
 `github-pat-<their-oid>` secret in Key Vault). Request the token against the **delegated scope**
-(`access_as_user`), using the app's client-id URI:
+(`access`), using the app's client-id URI:
 
 ```bash
 APPID=<your-app-client-id>   # the Application (client) ID
-TOKEN=$(az account get-access-token --scope "api://$APPID/access_as_user" --query accessToken -o tsv)
+TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
 GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.endpoints.sk}')
 ```
 
@@ -287,6 +287,86 @@ oc logs deploy/mcp-entra-sidecar -n mcp-gateway --tail=30 | grep -E 'authenticat
 
 ---
 
+## Step 9 — Connecting MCP clients
+
+The gateway requires a valid **Entra JWT** on every request; how each client obtains one differs.
+Use `<GATEWAY_URL>` = the gateway's `status.endpoints.sk` (Step 8) and `<APP_CLIENT_ID>` = the Entra
+app's Application (client) ID.
+
+**Pick the path for your client:** if your users are on **Claude Code**, use the token helper in
+**9b** — that's the path for this deployment. Section **9a (VS Code)** is included as a *reference*,
+not a recommendation: it proves the server-side Entra configuration is correct, because a client
+that implements Entra natively signs in seamlessly with zero extra config. That's what isolates the
+Claude Code limitation as a client-side gap (see the callout at the end), not a gateway/config problem.
+
+### 9a. VS Code Copilot — reference: proof the Entra config is correct
+
+Not a recommendation (many customers don't use Copilot) — this is the control case. A client with a
+native Entra auth provider signs in with **zero app-specific config beyond the URL**, which confirms
+the gateway + app registration are set up correctly and leaves any per-client friction (e.g. Claude
+Code, 9b) squarely on the client. `.vscode/mcp.json`:
+```json
+{ "servers": { "pov-gateway": { "type": "http", "url": "<GATEWAY_URL>" } } }
+```
+Open the workspace → Copilot **Agent mode** → **Sign in with Microsoft** → tools load. Requires
+azure-setup §1e (VS Code pre-authorized) **and** §1e-2 (public client + `http://localhost` redirect).
+**Verified working** end-to-end (interactive SSO → gateway → per-user credential injection).
+
+### 9b. Claude Code — Entra token helper (verified working)
+
+Claude Code's MCP OAuth can't complete against Entra (see the callout below), so it authenticates
+with an Entra token supplied by an auto-refreshing helper script:
+```bash
+cat > ~/entra-mcp-token.sh <<'EOF'
+#!/bin/bash
+tok=$(az account get-access-token --scope "api://<APP_CLIENT_ID>/access" --query accessToken -o tsv)
+printf '{"Authorization":"Bearer %s"}' "$tok"
+EOF
+chmod +x ~/entra-mcp-token.sh
+
+claude mcp add-json pov-gateway \
+  '{"type":"http","url":"<GATEWAY_URL>","headersHelper":"/absolute/path/to/entra-mcp-token.sh"}'
+```
+`/mcp` connects (no browser). The helper re-runs on reconnect / 401, so the token stays fresh as
+long as the user's `az` session is alive (`az login` once per user; the Azure CLI is pre-authorized
+in §1e). One-shot static alternative (expires ~1 h):
+```bash
+claude mcp add --transport http pov-gateway <GATEWAY_URL> \
+  --header "Authorization: Bearer $(az account get-access-token --scope api://<APP_CLIENT_ID>/access --query accessToken -o tsv)"
+```
+
+### 9c. Any other HTTP MCP client — static bearer fallback
+
+Same pattern: `Authorization: Bearer <entra-jwt>` from `az account get-access-token`, refreshed
+hourly (or via an equivalent helper).
+
+### 9d. Fleet distribution
+
+- **VS Code Copilot:** nothing to distribute — the client-id is built in; each user just signs in.
+- **Claude Code:** push the config to every machine with **`managed-mcp.json`** via MDM
+  (Jamf / Intune / GPO):
+  - macOS `/Library/Application Support/ClaudeCode/managed-mcp.json`
+  - Linux/WSL `/etc/claude-code/managed-mcp.json`
+  - Windows `C:\Program Files\ClaudeCode\managed-mcp.json`
+  Same JSON as 9b (`url` + `headersHelper`, and ship the helper script too). It auto-loads — no
+  per-user `claude mcp add`, no trust prompt. Optionally restrict to only managed servers with
+  `allowedMcpServers` + `allowManagedMcpServersOnly: true` in managed settings.
+
+> **Why Claude Code can't do interactive Entra sign-in — and why it's not a gateway problem.**
+> Two upstream incompatibilities between Claude Code's MCP OAuth and Microsoft Entra:
+> 1. Claude Code expects the authorization server to support **RFC 7591 Dynamic Client
+>    Registration**; Entra does not (its DCR is gated). Symptom: *"does not support dynamic client
+>    registration."*
+> 2. Even with a pre-registered `--client-id`, Claude Code sends an **RFC 8707 `resource`
+>    parameter** — the gateway URL, taken from the gateway's RFC 9728 metadata — which Entra
+>    rejects against the app-scoped scope. Symptom: **`AADSTS9010010`**. This is not fixable at the
+>    sidecar or gateway (the data plane sets `resource` to the gateway URL per RFC 9728 §3.3) nor in
+>    Entra (the gateway URL can't be registered as an app identifier).
+>
+> VS Code Copilot avoids both by using its **native Microsoft auth provider** instead of the
+> generic MCP OAuth flow. Until Anthropic ships an Entra-compatible client, Claude Code uses the
+> token helper (9b). This is a client ↔ identity-provider gap, **not** a limitation of the gateway.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -297,4 +377,8 @@ oc logs deploy/mcp-entra-sidecar -n mcp-gateway --tail=30 | grep -E 'authenticat
 | All requests now 401 after Step 7 | Expected — bearer auth is gone; present an Entra JWT | Use `az account get-access-token …` |
 | JWT rejected `wrong audience` | `ENTRA_AUDIENCE` must be the app **client ID** (GUID), not the `api://` URI (v2.0 tokens put client_id in `aud`) | Fix the env var, roll the sidecar |
 | GitHub call 401 / `get_connection_headers` empty | No `github-pat-<oid>` secret in Key Vault for that user | `az keyvault secret set --vault-name <kv> --name github-pat-<oid> --value <pat>` |
+| GitHub call `401 Bad credentials` (injection worked, GitHub rejected) | The `github-pat-<oid>` secret is expired/invalid or lacks scope | Store a valid PAT with the needed scopes in Key Vault |
+| Client OAuth: `AADSTS65001` (no consent) | The client's app-id isn't pre-authorized for the `access` scope | Pre-authorize the client id (azure-setup §1e); for CLI, the Azure CLI client |
+| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | Entra has no DCR; the client tried to self-register | Use the token helper (Step 9b) — or VS Code Copilot for interactive |
+| Client OAuth: `AADSTS9010010` (resource ≠ scope) | Claude Code's RFC 8707 `resource` param (gateway URL) can't reconcile with the Entra scope | Not fixable on Entra/gateway — use the token helper (9b) or VS Code (9a) |
 | Key Vault access denied | SP lacks `Key Vault Secrets User`, or KV is in access-policy (not RBAC) mode | Grant the role on the vault; switch KV to RBAC |

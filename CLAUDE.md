@@ -225,6 +225,23 @@ plain (public).
   **silently** (upstream then 401s and its tools never appear). This is the AGENTS.md
   "strict-schema delegator" hazard; any custom delegator must tolerate extra kwargs.
 
+**Connecting clients (M2 — see `docs/sidecar-entra.md` Step 9):** the gateway needs an Entra JWT
+per request; how clients get one differs, and this is where the real friction lives.
+- **VS Code Copilot** — interactive Microsoft sign-in via its built-in Entra provider. **Verified.**
+  Treat it as the *reference/control case*, not a recommendation (many customers don't use Copilot):
+  a client with native Entra support signs in with zero app-specific config, which proves the
+  server-side Entra setup is correct and isolates the Claude Code gap below as client-side. Needs the
+  app to pre-authorize VS Code's client-id (`aebc6443…`) + be a public client with an
+  `http://localhost` redirect (azure-setup §1e/§1e-2).
+- **Claude Code** — **interactive Entra OAuth does not work** (two upstream gaps: Entra has no
+  RFC 7591 DCR → *"does not support dynamic client registration"*; and even with `--client-id`,
+  Claude Code's RFC 8707 `resource` param = the gateway URL, which Entra rejects against the scope →
+  `AADSTS9010010`). The gateway data plane sets the PRM `resource` per RFC 9728, so it can't be
+  fixed sidecar-side. **Verified working path: a `headersHelper` token script** (`az account
+  get-access-token --scope api://<app-id>/access`), fleet-distributed via `managed-mcp.json` (MDM).
+  Not a gateway limitation — a Claude↔Entra gap.
+- Static bearer works for any HTTP client as a fallback.
+
 ## Working in this repo
 
 - Edit `README.md` (the guide) directly; it is the source of truth and renders on GitHub.

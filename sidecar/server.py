@@ -278,6 +278,12 @@ async def protected_resource_metadata(request: Request) -> JSONResponse:
     base = GATEWAY_RESOURCE.rstrip("/")
     resource = f"{base}{sub}" if sub else base
 
+    # NOTE: the gateway data plane overrides this `resource` field with the gateway URL when it
+    # proxies the PRM (RFC 9728 §3.3 requires resource == the fetched URL), so changing it here
+    # has no effect on what clients see. Documented because it matters for Entra: clients that
+    # send the RFC 8707 `resource=` param (e.g. Claude Code) then present the gateway URL, which
+    # Entra rejects against the app-scoped scope (AADSTS9010010). Not fixable at the sidecar.
+
     return JSONResponse(
         {
             "resource": resource,

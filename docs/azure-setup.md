@@ -37,13 +37,13 @@ Now add a **delegated scope** on the same page (required — clients acquire *de
 tokens against this scope, and §1e's pre-authorization references it):
 
 5. Click **Add a scope**
-6. Scope name: `access_as_user`
+6. Scope name: `access`
 7. Who can consent: **Admins and users**
 8. Fill in the consent display names/descriptions (e.g. "Access the MCP Gateway")
 9. State: **Enabled**, click **Add scope**
 
 > **App role vs. scope:** §1c below adds an *app role* (`MCPGateway.User`, an authorization
-> label in the `roles` claim). This scope (`access_as_user`) is what makes *delegated* token
+> label in the `roles` claim). This scope (`access`) is what makes *delegated* token
 > acquisition work at all. You need both.
 
 ### 1c. Add an app role
@@ -77,19 +77,26 @@ prompted for admin consent.
 **VS Code Copilot:**
 1. Go to **Expose an API → Add a client application**
 2. Client ID: `aebc6443-996d-45c2-90f0-388ff96faa56` (VS Code)
-3. Authorized scopes: check **`access_as_user`** (created in §1b)
+3. Authorized scopes: check **`access`** (created in §1b)
 4. Click **Add application**
 
-For other clients, obtain their client ID and add them here in the same way.
+Also pre-authorize the **Azure CLI** client `04b07795-8ddb-461a-bbee-02f9e1bf7b46` (same steps,
+`access` scope) — it's what `az account get-access-token` uses, and it powers the Step 8 test and
+the Claude Code token helper. Without it, CLI token requests fail with `AADSTS65001` (no consent).
 
-> **Testing from the CLI (`az account get-access-token`)?** The Azure CLI is a *separate* client
-> (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`). Out of the box, requesting a token for your API with
-> it fails with `AADSTS65001` (no consent). To use the CLI test in the deployment guide's Step 8
-> you must also: (a) ensure the `access_as_user` scope exists (§1b), (b) make sure the Azure CLI
-> service principal exists in your tenant, and (c) grant consent for it. The scripted setup in the
-> **CLI alternative** appendix does all three; via the Portal, add `04b07795-8ddb-461a-bbee-02f9e1bf7b46`
-> as an authorized client application (step above) with the `access_as_user` scope and grant admin
-> consent. For the normal VS Code Copilot flow this is not needed.
+### 1e-2. Enable desktop (public-client) sign-in
+
+Interactive MCP clients (VS Code Copilot, and any desktop client) complete OAuth via a **loopback
+redirect** and can't hold a client secret, so the app must allow public-client flows:
+
+1. Go to **Authentication → Add a platform → Mobile and desktop applications**
+2. Add redirect URI **`http://localhost`** (no port — Entra then matches any runtime port)
+3. Under **Advanced settings**, set **Allow public client flows = Yes**
+4. Save
+
+> Without this, interactive sign-in fails (Entra rejects the loopback redirect / requires a
+> secret). This is separate from §1f's client secret, which the **sidecar** uses for Key Vault —
+> not the interactive user flow.
 
 ### 1f. Create a client secret
 
@@ -224,17 +231,22 @@ az ad app update --id "$APPID" --identifier-uris "api://$APPID"
 ROLE_ID=$(cat /proc/sys/kernel/random/uuid)
 az ad app update --id "$APPID" --app-roles "[{\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Gateway User\",\"description\":\"Allows access to the MCP Gateway\",\"value\":\"MCPGateway.User\",\"id\":\"$ROLE_ID\",\"isEnabled\":true}]"
 
-# ---- 1b: delegated scope 'access_as_user' + 1d: v2 tokens ----
+# ---- 1b: delegated scope 'access' + 1d: v2 tokens ----
 SCOPE_ID=$(cat /proc/sys/kernel/random/uuid)
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
   --headers "Content-Type=application/json" \
-  --body "{\"api\":{\"requestedAccessTokenVersion\":2,\"oauth2PermissionScopes\":[{\"id\":\"$SCOPE_ID\",\"adminConsentDisplayName\":\"Access the MCP Gateway\",\"adminConsentDescription\":\"Access the MCP Gateway as the user\",\"value\":\"access_as_user\",\"type\":\"User\",\"isEnabled\":true}]}}"
+  --body "{\"api\":{\"requestedAccessTokenVersion\":2,\"oauth2PermissionScopes\":[{\"id\":\"$SCOPE_ID\",\"adminConsentDisplayName\":\"Access the MCP Gateway\",\"adminConsentDescription\":\"Access the MCP Gateway as the user\",\"value\":\"access\",\"type\":\"User\",\"isEnabled\":true}]}}"
 
 # ---- 1e: pre-authorize VS Code + Azure CLI clients for the scope ----
 VSCODE=aebc6443-996d-45c2-90f0-388ff96faa56
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
   --headers "Content-Type=application/json" \
   --body "{\"api\":{\"preAuthorizedApplications\":[{\"appId\":\"$VSCODE\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]},{\"appId\":\"$AZCLI\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]}]}}"
+
+# ---- 1e-2: enable desktop (public-client) sign-in: loopback redirect + public flows ----
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
+  --headers "Content-Type=application/json" \
+  --body "{\"isFallbackPublicClient\": true, \"publicClient\": {\"redirectUris\": [\"http://localhost\"]}}"
 
 # ---- 1f: client secret / 1g: service principal + self role assignment ----
 SECRET=$(az ad app credential reset --id "$APPID" --display-name sidecar --years 1 --query password -o tsv)
@@ -248,7 +260,7 @@ az rest --method POST --uri "https://graph.microsoft.com/v1.0/users/$MY_OID/appR
 AZCLI_SP=$(az ad sp show --id "$AZCLI" --query id -o tsv 2>/dev/null || az ad sp create --id "$AZCLI" --query id -o tsv)
 az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
   --headers "Content-Type=application/json" \
-  --body "{\"clientId\":\"$AZCLI_SP\",\"consentType\":\"AllPrincipals\",\"resourceId\":\"$SP_OID\",\"scope\":\"access_as_user\"}"
+  --body "{\"clientId\":\"$AZCLI_SP\",\"consentType\":\"AllPrincipals\",\"resourceId\":\"$SP_OID\",\"scope\":\"access\"}"
 
 # ---- 2: Key Vault (RBAC) + role grants ----
 az keyvault create -n "$KV" -g "$RG" -l "$LOC" --enable-rbac-authorization true

@@ -1,8 +1,18 @@
-# Milestone 1 — catalog + environment + gateway.
-#   - ConfigMap:      declares the available MCP servers (here: duckduckgo).
+# Milestone 3 — catalog + environment + gateway with group-based access.
+#   - ConfigMap:      declares all available MCP servers (duckduckgo, github, opine, granola).
 #   - MCPEnvironment: binds the catalog into the gateway runtime.
-#   - MCPGateway:     activates the named servers and exposes a gateway URL.
+#   - MCPGateway:     activates servers and enforces group-scoped visibility via policies.rules.
+#
+# Server visibility (all authenticated users see duckduckgo + github):
+#   duckduckgo  — everyone (no role restriction)
+#   github      — everyone (no role restriction; per-user PAT injected from Key Vault)
+#   opine       — mcp-team-a only (alice); OAuth PKCE via gateway broker
+#   granola     — mcp-team-b only (bob);  OAuth PKCE via gateway broker
+#
 # Apply after the MCPServer pods are Running.
+# NOTE: after applying this file for the first time (or when the catalog ConfigMap changes),
+# restart the control plane to pick up the new catalog entries:
+#   oc rollout restart deploy/mcp-gw-cp -n mcp-gateway
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -24,6 +34,62 @@ data:
           transport_type: streamable-http
         allowHosts:
           - api.duckduckgo.com:443
+
+      github:
+        name: github
+        title: GitHub
+        description: GitHub repository access — issues, PRs, code search
+        type: remote
+        auth_delegation: gateway
+        remote:
+          url: http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp
+          transport_type: streamable-http
+        allowHosts:
+          - api.github.com:443
+
+      opine:
+        name: opine
+        title: Opine
+        description: Opine AI — team-a only
+        type: remote
+        auth_delegation: gateway
+        remote:
+          url: https://mcp.opine.ai/mcp
+          transport_type: streamable-http
+        oauth:
+          providers:
+            - provider: opine
+
+      granola:
+        name: granola
+        title: Granola
+        description: Granola meeting notes — team-b only
+        type: remote
+        auth_delegation: gateway
+        remote:
+          url: https://mcp.granola.ai/mcp
+          transport_type: streamable-http
+        oauth:
+          providers:
+            - provider: granola
+        tools:
+          - name: list_meetings
+            description: List recent meeting notes from Granola for the authenticated user.
+            inputSchema:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  description: Maximum number of meetings to return (default 10).
+          - name: get_meeting
+            description: Retrieve a single meeting's full notes by meeting id.
+            inputSchema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                  description: The meeting ID to retrieve.
 ---
 apiVersion: mcp.docker.com/v1alpha1
 kind: MCPEnvironment
@@ -46,3 +112,35 @@ spec:
   displayName: "PoV Gateway"
   serverNames:
     - duckduckgo
+    - github
+    - opine
+    - granola
+  policies:
+    rules:
+      # --- everyone (all authenticated users) ---
+      # No role restriction: flip-to-deny only fires for unmatched requests,
+      # so these two servers are visible to any authenticated principal.
+      - serverName: duckduckgo
+        effect: allow
+      - serverName: github
+        effect: allow
+
+      # --- team-a (alice: mikegcoleman+alice@gmail.com) ---
+      - serverName: opine
+        role: mcp-team-a
+        effect: allow
+      # invokePrimordial is a distinct action not matched by serverName rules —
+      # the OAuth authorize tool must be explicitly allowed with a matching role.
+      - action: invokePrimordial
+        toolName: opine-authorize
+        role: mcp-team-a
+        effect: allow
+
+      # --- team-b (bob: mikegcoleman+bob@gmail.com) ---
+      - serverName: granola
+        role: mcp-team-b
+        effect: allow
+      - action: invokePrimordial
+        toolName: granola-authorize
+        role: mcp-team-b
+        effect: allow

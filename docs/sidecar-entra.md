@@ -312,10 +312,23 @@ Open the workspace → Copilot **Agent mode** → **Sign in with Microsoft** →
 azure-setup §1e (VS Code pre-authorized) **and** §1e-2 (public client + `http://localhost` redirect).
 **Verified working** end-to-end (interactive SSO → gateway → per-user credential injection).
 
-### 9b. Claude Code — Entra token helper (verified working)
+### 9b. Claude Code — DCR proxy (full OAuth, no helper script) — Milestone 3
 
-Claude Code's MCP OAuth can't complete against Entra (see the callout below), so it authenticates
-with an Entra token supplied by an auto-refreshing helper script:
+With the Entra DCR proxy deployed (see [group-based-access.md §5](group-based-access.md#5-deploy-the-entra-dcr-proxy-enables-full-oauth-in-mcp-clients)),
+Claude Code completes a full browser OAuth flow automatically — no `headersHelper` or `az` session
+required:
+
+```bash
+claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
+```
+
+On first connect, Claude Code opens a browser window. The user signs in with their Entra account
+and grants consent once. Subsequent connections are silent (token is refreshed automatically).
+
+> If the DCR proxy is not yet deployed, use the token helper fallback in **9b-fallback** below.
+
+### 9b-fallback. Claude Code — Entra token helper (Milestone 2, no DCR proxy)
+
 ```bash
 cat > ~/entra-mcp-token.sh <<'EOF'
 #!/bin/bash
@@ -329,11 +342,7 @@ claude mcp add-json pov-gateway \
 ```
 `/mcp` connects (no browser). The helper re-runs on reconnect / 401, so the token stays fresh as
 long as the user's `az` session is alive (`az login` once per user; the Azure CLI is pre-authorized
-in §1e). One-shot static alternative (expires ~1 h):
-```bash
-claude mcp add --transport http pov-gateway <GATEWAY_URL> \
-  --header "Authorization: Bearer $(az account get-access-token --scope api://<APP_CLIENT_ID>/access --query accessToken -o tsv)"
-```
+in §1e).
 
 ### 9c. Any other HTTP MCP client — static bearer fallback
 

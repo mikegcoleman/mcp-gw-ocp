@@ -595,8 +595,22 @@ that validates Entra JWTs and delegates per-user credentials from Key Vault), ad
 `MCPServer`, and re-wires the gateway's `dataPlane.pluginConfig` from the bearer plugin to the
 sidecar.
 
-> Servers that require the *end user* to complete an OAuth flow against the backend itself are a
-> later step, not covered here.
+## What's next — Milestone 3 (group-based server access)
+
+Milestone 2 gives every authenticated user access to every server. **Milestone 3** adds
+role-based server visibility: users in different Entra groups see different sets of MCP servers,
+with no sidecar code changes required.
+
+Demo scenario: all users see GitHub + DuckDuckGo; team-a (alice) additionally sees Opine;
+team-b (bob) additionally sees Granola. Server visibility is enforced by the gateway's built-in
+policy engine — users not in the right group simply don't see those servers in their tool list.
+
+**→ Full walkthrough: [docs/group-based-access.md](docs/group-based-access.md).**
+**→ Azure App Role setup: [docs/azure-setup.md](docs/azure-setup.md) §1c-2 and §1g-2.**
+
+Purely additive on top of Milestone 2. The only changes are new App Roles in Entra, assigning
+users to those roles, and adding `policies.rules` to the `MCPGateway` CR plus Opine and Granola
+to the catalog.
 
 ---
 

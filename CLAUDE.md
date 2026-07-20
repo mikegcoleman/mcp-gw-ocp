@@ -27,6 +27,12 @@ delivered with the **Entra sidecar** (source under `sidecar/`) — a FastMCP ser
 over HTTP, runs as its own Deployment, and is wired into the data plane via `dataPlane.pluginConfig`.
 See the dedicated Milestone 2 section below.
 
+**Milestone 3 (built — see [`docs/group-based-access.md`](docs/group-based-access.md)):**
+group-based server visibility via Entra App Roles + `MCPGateway.spec.policies.rules`. No sidecar
+code changes — the JWT `roles` claim is already extracted by `authenticate()` and consumed by the
+gateway policy engine. Demo users: alice (`mikegcoleman+alice@gmail.com`, team-a → Opine) and
+bob (`mikegcoleman+bob@gmail.com`, team-b → Granola); both see DuckDuckGo + GitHub.
+
 ## Deployment architecture (two-phase, operator-driven)
 
 ```
@@ -60,6 +66,7 @@ and **no `gateway-service` subchart**.
 | `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — the one standalone component. |
 | `sidecar/` | M2 Entra sidecar source (Python/FastMCP) + Dockerfile. |
 | `servers/github/` | M2 GitHub MCP server Dockerfile (builds `github/github-mcp-server` from upstream). |
+| `docs/group-based-access.md` | M3 guide — group-based server visibility (Entra App Roles + gateway policy rules). |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
 CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
@@ -78,6 +85,8 @@ were run end-to-end on a fresh ARO cluster.
 | Umbrella Secret (chart-rendered) | `mcp-gateway-gateway-service` (`<release>-gateway-service`) |
 | MCPServer / catalog / env / gateway | `duckduckgo` / `mcp-catalog` / `pov-env` / `pov-gateway` |
 | M2: Entra sidecar (svc) / GitHub MCPServer (svc) / SP-creds Secret | `mcp-entra-sidecar` / `github`→`mcp-github` / `azure-sp-credentials` |
+| M3: Entra App Roles | `MCPGateway.User` (gateway entry) / `mcp-team-a` (alice → Opine) / `mcp-team-b` (bob → Granola) |
+| M3: test users | alice `mikegcoleman+alice@gmail.com` (team-a) / bob `mikegcoleman+bob@gmail.com` (team-b) |
 
 ## Artifact model (how things are pulled)
 

@@ -4,7 +4,7 @@ Entra ID OIDC sidecar for the MCP Gateway.
 - Validates Entra JWTs in the `authenticate` MCP tool against the tenant's
   JWKS endpoint.
 - Serves /.well-known/oauth-protected-resource (RFC 9728) so MCP clients
-  discover Entra as the authorization server.
+  discover the authorization server.
 - Exposes `get_connection_headers` which looks up per-user PATs from Azure
   Key Vault and returns them as Authorization headers.
 
@@ -16,6 +16,11 @@ Env:
   ENTRA_RESOURCE_URI  Optional. Application ID URI (default: api://{CLIENT_ID}).
   GATEWAY_RESOURCE    Required. Public URL of the gateway (advertised in PRM).
   AZURE_KEYVAULT_URL  Required. Full URL of the Azure Key Vault.
+  DCR_PROXY_URL       Optional. Base URL of the Entra DCR proxy (e.g.
+                      https://<gateway-host>/dcr). When set, the PRM
+                      advertises the proxy as the authorization server instead
+                      of Entra directly, enabling RFC 7591 DCR for MCP clients
+                      (Claude Code, Claude Desktop, VS Code).
 """
 
 import logging
@@ -43,10 +48,14 @@ CLIENT_ID = os.environ["ENTRA_CLIENT_ID"]
 RESOURCE_URI = os.environ.get("ENTRA_RESOURCE_URI", f"api://{CLIENT_ID}")
 GATEWAY_RESOURCE = os.environ["GATEWAY_RESOURCE"]
 KEYVAULT_URL = os.environ["AZURE_KEYVAULT_URL"]
+DCR_PROXY_URL = os.environ.get("DCR_PROXY_URL", "").rstrip("/")
 
 # ── Derived ─────────────────────────────────────────────────────────────────
 ISSUER = f"https://login.microsoftonline.com/{TENANT_ID}/v2.0"
-AUTH_SERVER = ISSUER
+# When DCR_PROXY_URL is set, advertise the proxy as the authorization server so
+# MCP clients (Claude Code, Claude Desktop) can complete DCR → PKCE OAuth flows.
+# Without it they see Entra directly, which has no registration_endpoint.
+AUTH_SERVER = DCR_PROXY_URL if DCR_PROXY_URL else ISSUER
 JWKS_URI = f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
 SCOPE_VALUE = f"{RESOURCE_URI}/access"
 

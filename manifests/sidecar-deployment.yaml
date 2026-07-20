@@ -68,6 +68,15 @@ spec:
                   name: azure-sp-credentials
                   key: AZURE_CLIENT_SECRET
 
+            # ── DCR proxy (Milestone 3) — enables full OAuth for Claude Code / Desktop ──
+            # Set this to https://<gateway-dp-host>/dcr once the proxy is deployed.
+            # The sidecar advertises this URL as the authorization_server in the
+            # /.well-known/oauth-protected-resource response, which MCP clients use
+            # to discover DCR + PKCE endpoints instead of going to Entra directly.
+            # Leave unset (or empty) for Milestone 2 headersHelper-only operation.
+            - name: DCR_PROXY_URL
+              value: ""   # PLACEHOLDER — set to https://<gateway-dp-host>/dcr
+
             # ── OAuth broker (future phase — leave commented out for now) ────
             # - name: MCP_GATEWAY_OAUTH_PORT
             #   value: "5555"

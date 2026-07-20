@@ -139,6 +139,8 @@ def authenticate(headers: dict, method: str = "", path: str = "") -> dict:
         or claims["sub"]
     )
 
+    roles = claims.get("roles", [])
+    log.info("authenticated principal=%s roles=%s", principal_id, roles)
     return {
         "result": {
             "id": principal_id,
@@ -148,7 +150,7 @@ def authenticate(headers: dict, method: str = "", path: str = "") -> dict:
             # tenant guard rejects the request (404 gateway_not_found). Gateways created
             # without an explicit tenant are tenant "default"; override via GATEWAY_TENANT_ID.
             "tenant_id": os.environ.get("GATEWAY_TENANT_ID", "default"),
-            "roles": claims.get("roles", []),
+            "roles": roles,
             "metadata": {
                 "tenant_id": claims.get("tid"),
                 "object_id": claims.get("oid"),

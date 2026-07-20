@@ -277,13 +277,33 @@ az account get-access-token --scope "api://$APPID/access" --query accessToken -o
 ### 2a. Grant the sidecar access to Key Vault
 
 1. Open the Key Vault → **Access control (IAM) → Add role assignment**
-2. Role: **Key Vault Secrets User**
+2. Role: **Key Vault Secrets Officer** *(Milestone 3 requires Officer — see note below)*
 3. Assign access to: **User, group, or service principal**
 4. Members: search for your app registration name (`mcp-gateway`) and select it
 5. Click **Review + assign**
 
-> This grants the sidecar's service principal read access to secrets. It does **not**
-> grant write access — PAT secrets are loaded manually (or by your ops tooling).
+> **Milestone 2 only (PAT delegation):** `Key Vault Secrets User` (read-only) is sufficient —
+> PAT secrets are loaded manually and the sidecar only reads them.
+>
+> **Milestone 3 (OAuth PKCE):** the sidecar must *write* OAuth tokens to Key Vault after each
+> user completes the consent flow. This requires `Key Vault Secrets Officer` (read + write +
+> delete). If you assigned `Secrets User` for M2, upgrade it now:
+>
+> ```bash
+> # Remove the old read-only assignment first
+> az role assignment delete \
+>   --assignee <SP_APP_ID> \
+>   --role "Key Vault Secrets User" \
+>   --scope <KV_RESOURCE_ID>
+>
+> # Add the write-capable assignment
+> az role assignment create \
+>   --assignee <SP_APP_ID> \
+>   --role "Key Vault Secrets Officer" \
+>   --scope <KV_RESOURCE_ID>
+> ```
+>
+> Role assignments take 1–2 minutes to propagate.
 
 ---
 
@@ -451,7 +471,8 @@ az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGr
 # ---- 2: Key Vault (RBAC) + role grants ----
 az keyvault create -n "$KV" -g "$RG" -l "$LOC" --enable-rbac-authorization true
 KV_ID=$(az keyvault show -n "$KV" --query id -o tsv)
-az role assignment create --assignee "$SP_OID" --role "Key Vault Secrets User"   --scope "$KV_ID"
+# SP needs Officer (not just User) so it can write OAuth tokens during M3 PKCE flows
+az role assignment create --assignee "$SP_OID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
 az role assignment create --assignee "$MY_OID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
 
 # ---- 3: store a user's GitHub PAT (must be a VALID token with the scopes the tools need) ----

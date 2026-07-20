@@ -31,6 +31,8 @@ spec:
           ports:
             - name: mcp
               containerPort: 8080
+            - name: oauth
+              containerPort: 8082
           env:
             # ── Entra JWT validation ─────────────────────────────────────────
             - name: ENTRA_TENANT_ID
@@ -77,11 +79,21 @@ spec:
             - name: DCR_PROXY_URL
               value: ""   # PLACEHOLDER — set to https://<gateway-dp-host>/dcr
 
-            # ── OAuth broker (future phase — leave commented out for now) ────
-            # - name: MCP_GATEWAY_OAUTH_PORT
-            #   value: "5555"
-            # - name: MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL
-            #   value: "https://PLACEHOLDER_GATEWAY_URL/oauth"
+            # ── OAuth broker — required for gateway oauth: plugin (Milestone 3) ──
+            # MCP_GATEWAY_OAUTH_PORT starts the sidecar's OAuth callback server.
+            # The gateway DP's oauth: plugin calls oauth-start-callback-server on the
+            # sidecar during startup; if this env var is absent the DP crashes on boot
+            # with "MCP_GATEWAY_OAUTH_PORT not set". Port 8082 is free on the sidecar pod.
+            - name: MCP_GATEWAY_OAUTH_PORT
+              value: "8082"
+            # MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL is the external URL the sidecar uses
+            # as the redirect_uri when performing OAuth PKCE flows for granola/notion.
+            # After Milestone 3 deployment create a Route:
+            #   oc expose svc/mcp-entra-sidecar --name=mcp-sidecar-oauth --port=8082 \
+            #     --hostname=mcp-sidecar-oauth.<CLUSTER_DOMAIN>
+            # Then set this to: https://mcp-sidecar-oauth.<CLUSTER_DOMAIN>
+            - name: MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL
+              value: "PLACEHOLDER_OAUTH_CALLBACK_URL"   # e.g. https://mcp-sidecar-oauth.apps.example.com
 
           readinessProbe:
             httpGet:
@@ -135,3 +147,6 @@ spec:
     - name: mcp
       port: 8080
       targetPort: 8080
+    - name: oauth
+      port: 8082
+      targetPort: 8082

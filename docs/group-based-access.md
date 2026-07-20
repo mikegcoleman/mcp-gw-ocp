@@ -13,12 +13,17 @@ and the sidecar's `authenticate()` tool already extracts and returns them to the
 
 | User | Email | Role | Sees |
 |------|-------|------|------|
-| alice | `msmikecol@hotmail.com` | `mcp-team-a` | DuckDuckGo + GitHub + **Opine** |
-| bob | `mike.coleman@docker.co` | `mcp-team-b` | DuckDuckGo + GitHub + **Granola** |
+| alice | `msmikecol@hotmail.com` | `mcp-team-a` | DuckDuckGo + GitHub + **Granola** (`team-a-granola`) |
+| bob | `mike.coleman@docker.co` | `mcp-team-b` | DuckDuckGo + GitHub + **Notion** (`team-b-notion`) |
 
-DuckDuckGo and GitHub are open to all authenticated users. Opine and Granola are team-scoped:
+DuckDuckGo and GitHub are open to all authenticated users. Granola and Notion are team-scoped:
 a user without the matching role simply does not see those servers in their tool list (no error,
 just invisible).
+
+> **Server name prefixes:** team-managed servers are named `team-a-<server>` / `team-b-<server>`
+> to prevent collisions if two teams independently add a server with the same base name. Tools are
+> exposed with the full server name as prefix: `team-a-granola__list_meetings`,
+> `team-b-notion__search`, etc.
 
 ---
 
@@ -49,10 +54,10 @@ tools/list response contains only the servers the user's roles permit
 server that doesn't match an allow rule is hidden from that user. This means:
 
 - duckduckgo and github have unconditional allow rules (no `role` field) → visible to everyone
-- opine has `role: mcp-team-a` → visible only to alice
-- granola has `role: mcp-team-b` → visible only to bob
+- team-a-granola has `role: mcp-team-a` → visible only to alice
+- team-b-notion has `role: mcp-team-b` → visible only to bob
 
-**OAuth PKCE for team servers:** Opine and Granola use `auth_delegation: gateway` with OAuth.
+**OAuth PKCE for team servers:** Granola and Notion use `auth_delegation: gateway` with OAuth.
 On the first tool call, the upstream returns 401 and the gateway's OAuth broker calls the sidecar
 to start a PKCE flow. After the user completes consent, the token is stored in Key Vault and
 injected automatically on subsequent calls. See [Step 6](#6-oauth-first-use-flow) below.
@@ -73,14 +78,14 @@ assign each group to its app role.
 ```bash
 APPID=<your-application-client-id>
 
-# As alice:
-az login --allow-no-subscriptions --username mikegcoleman+alice@gmail.com
+# As alice (msmikecol@hotmail.com — expects mcp-team-a):
+az login --allow-no-subscriptions --username msmikecol@hotmail.com
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
 # Expected: ["MCPGateway.User", "mcp-team-a"]
 
-# As bob:
-az login --allow-no-subscriptions --username mikegcoleman+bob@gmail.com
+# As bob (mike.coleman@docker.co — expects mcp-team-b):
+az login --allow-no-subscriptions --username mike.coleman@docker.co
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
 # Expected: ["MCPGateway.User", "mcp-team-b"]
@@ -93,7 +98,7 @@ can take a minute to propagate — re-acquire the token after a short wait.
 
 ## 3. Apply the catalog and policy
 
-`catalog-and-gateway.yaml` now contains all four servers (duckduckgo, github, opine, granola)
+`catalog-and-gateway.yaml` now contains all four servers (duckduckgo, github, granola, notion)
 and the `policies.rules` block. Apply it and restart the control plane to pick up the new
 catalog entries:
 
@@ -120,7 +125,7 @@ Use the MCP session handshake (same pattern as README Step 11c) with each user's
 GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.endpoints.sk}')
 APPID=<your-application-client-id>
 
-# ---- Test as alice (msmikecol@hotmail.com — should see duckduckgo, github, opine, NOT granola) ----
+# ---- Test as alice (msmikecol@hotmail.com — should see duckduckgo, github, granola, NOT notion) ----
 az login --allow-no-subscriptions --username msmikecol@hotmail.com
 ALICE_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
 
@@ -138,13 +143,13 @@ curl -sS -k -X POST "$GATEWAY_URL" -H "Authorization: Bearer $ALICE_TOKEN" \
   -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | sed -n 's/^data: //p' | jq '[.result.tools[].name]'
-# Expect: duckduckgo__search, github__*, opine__* present; NO granola__* tools
+# Expect: duckduckgo__search, github__*, team-a-granola__* present; NO team-b-notion__* tools
 
-# ---- Test as bob (mike.coleman@docker.co — should see duckduckgo, github, granola, NOT opine) ----
+# ---- Test as bob (mike.coleman@docker.co — should see duckduckgo, github, team-b-notion, NOT team-a-granola) ----
 az login --allow-no-subscriptions --username mike.coleman@docker.co
 BOB_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
 # ... repeat the same handshake with BOB_TOKEN ...
-# Expect: duckduckgo__search, github__*, granola__* present; NO opine__* tools
+# Expect: duckduckgo__search, github__*, team-b-notion__* present; NO team-a-granola__* tools
 ```
 
 ---
@@ -217,20 +222,18 @@ curl -s "https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr/health"
 # expect: {"status":"ok"}
 ```
 
-### 5d. Tell the gateway DP about the DCR proxy
+### 5d. Tell the sidecar about the DCR proxy
 
-The DP reads `DCR_PROXY_URL` from its environment to know where to forward Dynamic Client
-Registration requests. Patch it into the running `GatewayServiceConfig`:
+The sidecar serves `/.well-known/oauth-protected-resource` — it must advertise the DCR proxy URL
+so MCP clients discover DCR + PKCE endpoints instead of going to Entra directly. Patch it into
+the sidecar Deployment:
 
 ```bash
 CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
 DCR_URL="https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr"
 
-# JSON Patch appends to extraEnv without overwriting existing entries
-oc patch gatewayserviceconfig mcp-gw -n mcp-gateway --type=json -p \
-  "[{\"op\":\"add\",\"path\":\"/spec/dataPlane/extraEnv/-\",\"value\":{\"name\":\"DCR_PROXY_URL\",\"value\":\"$DCR_URL\"}}]"
-
-oc rollout status deploy/mcp-gw-dp -n mcp-gateway
+oc set env deploy/mcp-entra-sidecar DCR_PROXY_URL="$DCR_URL" -n mcp-gateway
+oc rollout status deploy/mcp-entra-sidecar -n mcp-gateway
 ```
 
 ### 5e. Connect MCP clients — full OAuth (no helper script)
@@ -244,24 +247,18 @@ claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
 ```
 
 On first connection the client opens a browser window to sign in with the user's Entra account.
-Each user's tool list will differ based on their role assignment — alice sees Opine, bob sees
-Granola, both see DuckDuckGo and GitHub.
-
-Use `client_setup.sh` to provision the demo sandboxes for alice and bob:
-
-```bash
-./client_setup.sh
-```
+Each user's tool list will differ based on their role assignment — alice sees Granola, bob sees
+Notion, both see DuckDuckGo and GitHub.
 
 ---
 
 ## 6. OAuth first-use flow
 
-Opine and Granola use `auth_delegation: gateway` with OAuth PKCE. On the first tool call
+Granola and Notion use `auth_delegation: gateway` with OAuth PKCE. On the first tool call
 after connecting:
 
 1. The gateway calls the upstream with no credentials → upstream returns 401
-2. The gateway's OAuth broker calls the sidecar's `opine-authorize` (or `granola-authorize`)
+2. The gateway's OAuth broker calls the sidecar's `team-a-granola-authorize` (or `team-b-notion-authorize`)
    primordial tool
 3. The sidecar performs OAuth discovery on the upstream, registers dynamically (DCR), and
    generates a PKCE challenge
@@ -271,10 +268,10 @@ after connecting:
    Key Vault
 7. Subsequent calls inject the token automatically — no user action required
 
-> **Note on Opine OAuth DCR:** Opine must support RFC 7591 Dynamic Client Registration for the
-> sidecar's broker to register automatically. Verify this with the Opine documentation before
-> the demo. If DCR is not supported, a static OAuth client ID/secret can be pre-configured in
-> the catalog's `oauth` block.
+> **Note on OAuth DCR:** Granola and Notion must support RFC 7591 Dynamic Client Registration
+> for the sidecar's broker to register automatically. Verify this with each service's
+> documentation before the demo. If DCR is not supported, a static OAuth client ID/secret can
+> be pre-configured in the catalog's `oauth` block.
 
 ---
 
@@ -309,9 +306,10 @@ policies:
 | Server visible to wrong user | Rule missing the `role` field | Add `role: mcp-team-x` to the rule |
 | `roles` claim empty in token | User not assigned to the app role in Entra | Enterprise apps → Users and groups → assign the role |
 | Policy change not taking effect | `policies` block omitted (no-op update) | Use `rules: []` to clear, or add explicit rules and re-apply |
-| OAuth flow not triggering | `invokePrimordial` rule missing | Add `action: invokePrimordial` + `toolName: <server>-authorize` rule |
+| OAuth flow not triggering | `invokePrimordial` rule missing, or `oauth` plugin not in pluginConfig | Add `action: invokePrimordial` + `toolName: team-a-granola-authorize` (or `team-b-notion-authorize`) rule; to enable the gateway OAuth broker add `oauth: {provider: mcp, server: <sidecar-url>}` to pluginConfig **and** set `MCP_GATEWAY_OAUTH_PORT=8082` on the **sidecar** (not the DP) |
+| OAuth flow fails with `ForbiddenByRbac` / `setSecret` denied | SP has `Key Vault Secrets User` (read-only) but OAuth token write requires `Key Vault Secrets Officer` | `az role assignment create --assignee <SP_APP_ID> --role "Key Vault Secrets Officer" --scope <KV_ID>` (see azure-setup.md §2a) |
 | GitHub tools present but calls fail with 401 | No `github-pat-<oid>` in Key Vault for this user | Add the secret per [azure-setup.md §3](azure-setup.md#3-load-pat-secrets-into-key-vault) |
 | Catalog changes not taking effect | CP not restarted after ConfigMap change | `oc rollout restart deploy/mcp-gw-cp -n mcp-gateway` |
-| Claude Code OAuth browser never opens | DCR proxy not deployed or `DCR_PROXY_URL` not patched into DP | Deploy `manifests/entra-dcr-proxy.yaml` and run the `oc patch` from Step 5c |
+| Claude Code OAuth browser never opens | DCR proxy not deployed or `DCR_PROXY_URL` not set on sidecar | Deploy `manifests/entra-dcr-proxy.yaml` and run `oc set env` from Step 5d |
 | DCR proxy pod crash-looping | `entra-dcr-proxy-credentials` secret missing or has wrong keys | Verify with `oc describe secret entra-dcr-proxy-credentials -n mcp-gateway` |
 | `/dcr/health` returns 503 from Route | Proxy pod not ready | `oc get pod -l app=entra-dcr-proxy -n mcp-gateway` and check logs |

@@ -30,8 +30,8 @@ See the dedicated Milestone 2 section below.
 **Milestone 3 (built — see [`docs/group-based-access.md`](docs/group-based-access.md)):**
 group-based server visibility via Entra App Roles + `MCPGateway.spec.policies.rules`. No sidecar
 code changes — the JWT `roles` claim is already extracted by `authenticate()` and consumed by the
-gateway policy engine. Demo users: alice (`mikegcoleman+alice@gmail.com`, team-a → Opine) and
-bob (`mikegcoleman+bob@gmail.com`, team-b → Granola); both see DuckDuckGo + GitHub.
+gateway policy engine. Demo users: alice (`msmikecol@hotmail.com`, mcp-team-a → Granola) and
+bob (`mike.coleman@docker.co`, mcp-team-b → Notion); both see DuckDuckGo + GitHub.
 
 ## Deployment architecture (two-phase, operator-driven)
 
@@ -85,8 +85,10 @@ were run end-to-end on a fresh ARO cluster.
 | Umbrella Secret (chart-rendered) | `mcp-gateway-gateway-service` (`<release>-gateway-service`) |
 | MCPServer / catalog / env / gateway | `duckduckgo` / `mcp-catalog` / `pov-env` / `pov-gateway` |
 | M2: Entra sidecar (svc) / GitHub MCPServer (svc) / SP-creds Secret | `mcp-entra-sidecar` / `github`→`mcp-github` / `azure-sp-credentials` |
-| M3: Entra App Roles | `MCPGateway.User` (gateway entry) / `mcp-team-a` (alice → Opine) / `mcp-team-b` (bob → Granola) |
-| M3: test users | alice `mikegcoleman+alice@gmail.com` (team-a) / bob `mikegcoleman+bob@gmail.com` (team-b) |
+| M3: Entra App Roles | `MCPGateway.User` (gateway entry) / `mcp-team-a` (alice → Granola) / `mcp-team-b` (bob → Notion) |
+| M3: team servers (prefixed to prevent collisions) | `team-a-granola` (mcp-team-a only) / `team-b-notion` (mcp-team-b only) |
+| M3: OAuth primordials | `team-a-granola-authorize` / `team-b-notion-authorize` (primordial name = `{serverName}-authorize`) |
+| M3: test users | alice `msmikecol@hotmail.com` (mcp-team-a) / bob `mike.coleman@docker.co` (mcp-team-b) |
 
 ## Artifact model (how things are pulled)
 
@@ -145,6 +147,23 @@ a published release.
 7. **CRDs are install-only.** `helm upgrade` never updates them; pull the `mcp-operator` chart and
    `oc apply -f mcp-operator/crds/` when schemas change.
 8. **`oc process` strips `namespace`** from rendered objects — apply the CR with `-n mcp-gateway`.
+9. **ClusterRoleBinding wrong namespace.** The Helm-installed `ClusterRoleBinding/mcp-gateway-mcp-operator`
+   binds the SA in namespace `mcp-gateway-refocpgw1` (the chart's default namespace), not your actual
+   namespace. This makes the operator unable to list/watch MCPGateway, MCPServer, etc. at cluster scope —
+   reconcile loops fail silently after the initial bring-up. MCPGateway changes (new servers, policy rules,
+   discoveryMode) are never pushed to the CP/DP. Fix: `oc patch clusterrolebinding mcp-gateway-mcp-operator
+   --type=json -p '[{"op":"replace","path":"/subjects/0/namespace","value":"mcp-gateway"}]'`.
+10. **`oauth:` plugin requires `MCP_GATEWAY_OAUTH_PORT` on the SIDECAR, not the DP.** Adding an `oauth:`
+    block to `dataPlane.pluginConfig` crashes the DP at startup: `failed to create OAuth plugin from config:
+    register oauth callback session: plugin error (not_configured): MCP_GATEWAY_OAUTH_PORT not set`. This
+    error comes from the **sidecar's** `oauth-start-callback-server` MCP tool (called by the DP during
+    plugin init), not from the DP binary itself. Setting `MCP_GATEWAY_OAUTH_PORT=8082` in DP `extraEnv`
+    does NOT fix it — the env var must be on the **sidecar Deployment**. Fix: add `MCP_GATEWAY_OAUTH_PORT:
+    "8082"` + `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL: "https://mcp-sidecar-oauth.<domain>"` to the sidecar
+    env; add port 8082 to its Service; create a Route for it. The `oauth:` plugin IS required for M3 —
+    without it, catalog entries with `oauth.providers` are deferred as "pre-auth OAuth servers" and the
+    `<server>-authorize` primordial never appears. Note: `static_tools` proto field was removed; static
+    tool declarations in the catalog no longer surface for deferred servers.
 
 ## MCP protocol reality (for testing the gateway over HTTP)
 

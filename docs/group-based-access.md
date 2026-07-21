@@ -280,6 +280,17 @@ after connecting:
 The `deploy-team-a.yml` workflow lets alice (team-a owner) push changes to this repo and
 have them applied to the cluster automatically — no manual `oc apply` needed.
 
+**Ownership split:** alice owns her catalog ConfigMap and policy ConfigMap. The MCPGateway CR
+(`mcpgateway.yaml`) and GatewayServiceConfig remain IT-owned; alice's pipeline never touches them.
+
+```
+alice pushes ──► catalog-team-a.yaml          (team-a-granola catalog entry)
+               + manifests/team-a-policy.yaml  (tool-level deny rules)
+
+IT controls  ──► mcpgateway.yaml               (server visibility + OAuth primordials)
+               + gatewayserviceconfig.yaml      (plugin wiring, Entra config)
+```
+
 ### 7a. Apply the pipeline RBAC
 
 ```bash
@@ -288,12 +299,11 @@ kubectl apply -f manifests/rbac-pipeline.yaml -n mcp-gateway
 
 This creates the `team-a-pipeline` ServiceAccount with scoped RBAC:
 - MCPServer full CRUD (for in-cluster server pods)
-- MCPGateway / MCPEnvironment / ConfigMap patch (to update policy rules and catalog)
+- ConfigMap create/patch (for `catalog-team-a` and `team-a-policy`)
 
 ### 7b. Mint a token and add GitHub secrets
 
 ```bash
-# Run on the cluster (or use oc):
 OCP_TOKEN_TEAM_A=$(kubectl create token team-a-pipeline -n mcp-gateway --duration=8760h)
 OCP_SERVER=$(oc whoami --show-server)
 ```
@@ -307,49 +317,100 @@ Add two secrets to the GitHub repo (**Settings → Secrets and variables → Act
 
 ### 7c. How it works
 
-On every push to `main` that touches `catalog-and-gateway.yaml` or
-`manifests/mcpserver-team-a-*.yaml`, the workflow:
-1. Applies the catalog ConfigMap + MCPGateway CR
-2. Applies any `mcpserver-team-a-*.yaml` manifests (for in-cluster servers)
-3. Restarts the control plane to pick up catalog changes
-4. Waits for the gateway to reach `Active`
+On every push to `main` that touches `catalog-team-a.yaml`, `manifests/team-a-policy.yaml`,
+or `manifests/mcpserver-team-a-*.yaml`, the workflow:
+1. Applies `catalog-team-a.yaml` (catalog ConfigMap for alice's servers)
+2. Applies `manifests/team-a-policy.yaml` (tool-level deny rules — see §8)
+3. Applies any `mcpserver-team-a-*.yaml` manifests (for in-cluster servers)
+4. Restarts the control plane to pick up catalog changes
+5. Waits for the gateway to reach `Active`
 
-Policy-only changes (adding/removing rules in `catalog-and-gateway.yaml` without
-changing the catalog ConfigMap) still trigger a CP restart — safe and idempotent.
+Policy ConfigMap changes take effect within ~60 seconds (kubelet sync) without any restart.
+The CP restart step is there for catalog changes and is safe to run idempotently.
 
 ---
 
-## 8. Tool-level access control — blocking individual tools
+## 8. Policy architecture — two layers
 
-Server-level rules (`serverName`) control whether a user sees a server at all.
-Tool-level rules let you block a specific tool within a server a user can otherwise access.
+The gateway enforces policy at two independent layers. They are **additive**: a request must
+pass both to succeed.
 
-### Rule syntax
-
-```yaml
-- serverName: team-a-granola   # which server
-  toolName: list_meetings       # backend tool name (NOT the prefixed "team-a-granola__list_meetings")
-  action: invoke                # block the call, not just discovery
-  effect: deny
-  reason: "list_meetings temporarily restricted by central IT"
+```
+Request arrives at DP
+        ↓
+[Layer 1 — MCPGateway CR rules]   IT-owned • server visibility + top-level tool blocks
+        ↓ (allowed by CR)
+[Layer 2 — Sidecar evaluate_policy]   Team-owned • per-team tool-level deny rules
+        ↓ (allowed by both)
+Call reaches upstream server
 ```
 
-**Deny-wins semantics:** a `deny` rule overrides any matching `allow` rule. Alice has an
-allow rule for `team-a-granola` (as `mcp-team-a`), but adding this deny blocks `list_meetings`
-for everyone — including her — regardless of role.
+**Deny-wins across both layers:** a deny anywhere blocks the call, regardless of other allows.
 
-To block for a specific role only, add `role: mcp-team-a` to the deny rule.
+### Layer 1 — MCPGateway CR policies (IT-owned)
 
-### Demo flow
+Controlled by IT via `mcpgateway.yaml`. Used for **server visibility** (which teams see which
+servers) and cross-cutting tool blocks (deny for everyone, or deny for a role).
+
+```yaml
+# in mcpgateway.yaml → spec.policies.rules
+- serverName: team-a-granola
+  effect: allow
+  role: mcp-team-a          # only alice's group sees this server
+
+- serverName: duckduckgo
+  effect: allow              # no role → visible to all authenticated users
+```
+
+To add a tool-level IT deny (blocks everyone, regardless of team):
+
+```yaml
+- serverName: team-a-granola
+  toolName: list_meetings    # backend name, NOT the prefixed "team-a-granola__list_meetings"
+  action: invoke
+  effect: deny
+  reason: "list_meetings restricted by central IT"
+```
+
+CR changes take effect immediately after `kubectl apply` — no CP restart needed for policy-only
+changes (catalog ConfigMap changes still require a CP restart).
+
+### Layer 2 — Sidecar ConfigMap policy (team-owned)
+
+Controlled by alice via `manifests/team-a-policy.yaml`. The sidecar's `evaluate_policy` MCP
+tool is called by the gateway DP for every tool invocation. It reads YAML rule files from
+`/etc/mcp-policy/` (volume-mounted from the `team-a-policy` ConfigMap) on each call.
+
+```yaml
+# in manifests/team-a-policy.yaml → data.policy.yaml → rules
+rules:
+  - serverName: team-a-granola
+    toolName: list_meetings
+    effect: deny
+    reason: "list_meetings temporarily restricted by team-a policy"
+```
+
+Rule fields:
+| Field | Required | Notes |
+|-------|----------|-------|
+| `serverName` | yes | must match the backend name (`team-a-granola`, not the prefixed tool name) |
+| `toolName` | no | omit to match all tools on this server |
+| `effect` | yes | only `deny` is evaluated; allow is the default |
+| `reason` | no | surfaced to the caller in the error response |
+
+ConfigMap updates propagate to the sidecar pod within ~60 seconds (kubelet volume sync) — **no
+sidecar or DP restart needed**. The sidecar re-reads the files on every `evaluate_policy` call.
+
+### Demo flow — self-service tool block
 
 1. Alice connects → `team-a-granola__list_meetings` works ✓
-2. Push a commit adding the deny rule above to `catalog-and-gateway.yaml`
-3. `deploy-team-a.yml` triggers in GHA (~30s for CP rollout)
-4. Alice calls `list_meetings` → **blocked by policy** (error includes the `reason` string)
-5. Revert: remove the deny rule, push → GHA applies → tool works again
+2. Uncomment the deny rule in `manifests/team-a-policy.yaml`, push to `main`
+3. `deploy-team-a.yml` applies the ConfigMap update (~30s including CP rollout for catalog)
+4. Within ~60s the kubelet syncs the volume; alice's next `list_meetings` call is **denied**
+   (response includes the `reason` string from the rule)
+5. Revert: comment out the rule, push → pipeline applies → tool restored within ~60s
 
-No gateway or sidecar restart needed — the DP picks up MCPGateway policy changes
-immediately once the CR is applied.
+Alice can self-serve this without touching `mcpgateway.yaml` or involving IT.
 
 ---
 
@@ -388,6 +449,9 @@ policies:
 | OAuth flow fails with `ForbiddenByRbac` / `setSecret` denied | SP has `Key Vault Secrets User` (read-only) but OAuth token write requires `Key Vault Secrets Officer` | `az role assignment create --assignee <SP_APP_ID> --role "Key Vault Secrets Officer" --scope <KV_ID>` (see azure-setup.md §2a) |
 | GitHub tools present but calls fail with 401 | No `github-pat-<oid>` in Key Vault for this user | Add the secret per [azure-setup.md §3](azure-setup.md#3-load-pat-secrets-into-key-vault) |
 | Catalog changes not taking effect | CP not restarted after ConfigMap change | `oc rollout restart deploy/mcp-gw-cp -n mcp-gateway` |
+| Tool blocked unexpectedly (Layer 2) | A deny rule in `team-a-policy` ConfigMap | `kubectl get cm team-a-policy -n mcp-gateway -o jsonpath='{.data.policy\.yaml}'` to inspect rules |
+| Policy ConfigMap change not taking effect | Kubelet volume sync delay (~60s) or pod restart needed | Wait ~60s after `kubectl apply`; verify with `kubectl exec <sidecar-pod> -- cat /etc/mcp-policy/policy.yaml` |
+| `evaluate_policy` not called (no sidecar logs) | `plugins.policy` key missing from GatewayServiceConfig | Patch pluginConfig: `plugins.policy.provider: mcp` + `plugins.policy.server: http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp`; delete DP pod to force config reload |
 | Claude Code OAuth browser never opens | DCR proxy not deployed or `DCR_PROXY_URL` not set on sidecar | Deploy `manifests/entra-dcr-proxy.yaml` and run `oc set env` from Step 5d |
 | DCR proxy pod crash-looping | `entra-dcr-proxy-credentials` secret missing or has wrong keys | Verify with `oc describe secret entra-dcr-proxy-credentials -n mcp-gateway` |
 | `/dcr/health` returns 503 from Route | Proxy pod not ready | `oc get pod -l app=entra-dcr-proxy -n mcp-gateway` and check logs |

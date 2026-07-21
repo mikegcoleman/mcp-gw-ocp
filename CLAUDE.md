@@ -64,7 +64,7 @@ and **no `gateway-service` subchart**.
 | `docs/sidecar-entra.md` | Milestone 2 guide (Entra auth + per-user Key Vault creds), continues from the README. |
 | `docs/azure-setup.md` | M2 Azure prerequisites (Portal steps + a scripted `az` CLI appendix). |
 | `mcpserver-github.yaml` | M2 MCPServer CR — GitHub server (per-user PAT injection; `auth_delegation: gateway`). |
-| `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — the one standalone component. **Do NOT `kubectl apply -f` this directly** — it has PLACEHOLDER env vars; use `kubectl patch` for env changes (see M2 deploy gotchas). |
+| `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — OpenShift Template; requires `IMAGE` param. All env config comes from `sidecar-config` + `azure-sp-credentials` Secrets. Apply via `oc process -f … -p IMAGE=… \| oc apply -f -`. |
 | `sidecar/` | M2/M3 Entra sidecar source (Python/FastMCP) + Dockerfile. |
 | `servers/github/` | M2 GitHub MCP server Dockerfile (builds `github/github-mcp-server` from upstream). |
 | `docs/group-based-access.md` | M3 guide — group-based server visibility + GitOps pipeline + sidecar policy lane. |

@@ -106,14 +106,45 @@ oc adm policy add-scc-to-user anyuid -z default -n mcp-gateway
 > and is already covered by the `nonroot-v2` grant from Milestone 1 — no extra grant needed for it.
 > If you rebuild the GitHub image to run non-root, you can skip this `anyuid` grant.
 
-## Step 4 — Edit the sidecar manifest and deploy it
+## Step 4 — Deploy the sidecar
 
-In `manifests/sidecar-deployment.yaml`, replace every `PLACEHOLDER_*` value (image ref, Entra
-tenant/client IDs, resource URI, gateway URL, Key Vault URL — see the table in
-[`azure-setup.md`](azure-setup.md)). Then deploy the sidecar (a standalone Deployment + Service):
+### Step 4a — Create the sidecar-config Secret
+
+All deployment-specific values (Entra IDs, gateway URL, Key Vault URL, OAuth callback URLs) live
+in a `sidecar-config` Secret. The manifest never contains these values, so re-applying it can
+never accidentally overwrite them.
 
 ```bash
-oc apply -f manifests/sidecar-deployment.yaml
+CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+
+oc create secret generic sidecar-config \
+  --from-literal=ENTRA_TENANT_ID=<TENANT_ID> \
+  --from-literal=ENTRA_AUDIENCE=<CLIENT_ID> \
+  --from-literal=ENTRA_CLIENT_ID=<CLIENT_ID> \
+  --from-literal=ENTRA_RESOURCE_URI=api://<CLIENT_ID> \
+  --from-literal=GATEWAY_RESOURCE=https://mcp-gw-dp.$CLUSTER_DOMAIN \
+  --from-literal=AZURE_KEYVAULT_URL=https://<KV_NAME>.vault.azure.net/ \
+  --from-literal=DCR_PROXY_URL=https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr \
+  --from-literal=MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL=https://mcp-sidecar-oauth.$CLUSTER_DOMAIN \
+  -n mcp-gateway
+```
+
+See [`azure-setup.md`](azure-setup.md) for where each value comes from. Leave `DCR_PROXY_URL`
+and `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL` as empty strings (`--from-literal=DCR_PROXY_URL=`)
+for Milestone 2 — they are required for Milestone 3.
+
+### Step 4b — Deploy the sidecar
+
+`manifests/sidecar-deployment.yaml` is an OpenShift Template — it requires an `IMAGE` parameter
+(the sidecar image you built in Step 1B) and reads all config from the Secrets above.
+
+```bash
+IMAGE=$(oc get istag mcp-entra-sidecar:latest -n mcp-gateway \
+  -o jsonpath='{.image.dockerImageReference}')
+
+oc process -f manifests/sidecar-deployment.yaml -p IMAGE="$IMAGE" \
+  | oc apply -n mcp-gateway -f -
+
 oc rollout status deploy/mcp-entra-sidecar -n mcp-gateway
 ```
 

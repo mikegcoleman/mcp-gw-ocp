@@ -249,6 +249,17 @@ _oauth_server.init()
 _oauth_server.register_tools(mcp)
 
 
+# ── Policy plugin ─────────────────────────────────────────────────────────────
+# Registers evaluate_policy — called by the gateway's SidecarPolicyPlugin
+# (plugins.policy.provider: mcp in pluginConfig). Reads deny rules from
+# YAML files in MCP_GATEWAY_POLICY_DIR (/etc/mcp-policy by default),
+# which is volume-mounted from per-team ConfigMaps.
+
+from policy import policy as _policy
+
+_policy.register_tools(mcp)
+
+
 # ── Telemetry stubs ─────────────────────────────────────────────────────────
 
 

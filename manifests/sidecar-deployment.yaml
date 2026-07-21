@@ -95,6 +95,10 @@ spec:
             - name: MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL
               value: "PLACEHOLDER_OAUTH_CALLBACK_URL"   # e.g. https://mcp-sidecar-oauth.apps.example.com
 
+            # ── Policy plugin ─────────────────────────────────────────────────
+            - name: MCP_GATEWAY_POLICY_DIR
+              value: "/etc/mcp-policy"
+
           readinessProbe:
             httpGet:
               path: /healthz
@@ -129,11 +133,17 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /.cache
+            - name: team-a-policy
+              mountPath: /etc/mcp-policy
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: cache
           emptyDir: {}
+        - name: team-a-policy
+          configMap:
+            name: team-a-policy
 ---
 apiVersion: v1
 kind: Service

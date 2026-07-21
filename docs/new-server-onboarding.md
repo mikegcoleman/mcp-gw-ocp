@@ -16,7 +16,7 @@ flowchart TD
     B -->|New team| C1[Create Entra App Role mcp-team-X\nin Azure app registration]
     C1 --> C2[Create Entra Security Group\nAdd users to group\nAssign group to app role]
     C2 --> C3[Create catalog-team-X.yaml ConfigMap\nUpdate mcpenvironment.yaml to reference it]
-    C3 --> C4[Apply pipeline RBAC\nkubectl apply -f manifests/rbac-pipeline.yaml\nMint team-X-pipeline SA token\nAdd OCP_SERVER + OCP_TOKEN_TEAM_X\nto GitHub Actions secrets]
+    C3 --> C4[Apply pipeline RBAC\nkubectl apply -f manifests/rbac-pipeline.yaml\nMint team-X-pipeline SA token\nAdd OCP_SERVER + OCP_TOKEN_TEAM_X\nto GitHub Actions secrets\n⚙ specific to this environment]
 
     B -->|Existing team| E
     C4 --> E

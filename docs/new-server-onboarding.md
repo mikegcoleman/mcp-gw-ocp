@@ -8,6 +8,7 @@ Decision flow for adding a server under the group-based access model.
 |-------|-------|-------------------|
 | Amber | IT / central ops | Entra setup, MCPGateway CR, pipeline RBAC, CP restarts |
 | Pink | Team | MCPServer CRs, catalog ConfigMap, policy ConfigMap, GHA pipeline pushes |
+| Dark blue | — | Steps specific to this PoV guide |
 
 ```mermaid
 flowchart TD

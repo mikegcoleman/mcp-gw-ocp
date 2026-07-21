@@ -10,7 +10,7 @@ name: Deploy — Team A
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/group-based-access]
     paths:
       - 'catalog-and-gateway.yaml'
       - 'manifests/mcpserver-team-a-*.yaml'

@@ -254,3 +254,14 @@ spec:
       - action: invokePrimordial
         toolName: code-mode
         effect: allow
+
+      # --- DEMO: tool-level block (uncomment to block list_meetings for everyone) ---
+      # Deny-wins: overrides the mcp-team-a allow above.
+      # Push this change → pipeline applies it → alice's list_meetings call fails.
+      # Revert (re-comment) and push to restore.
+      #
+      # - serverName: team-a-granola
+      #   toolName: list_meetings
+      #   action: invoke
+      #   effect: deny
+      #   reason: "list_meetings temporarily restricted by central IT"

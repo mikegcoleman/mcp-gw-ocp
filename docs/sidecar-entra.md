@@ -324,11 +324,10 @@ The gateway requires a valid **Entra JWT** on every request; how each client obt
 Use `<GATEWAY_URL>` = the gateway's `status.endpoints.sk` (Step 8) and `<APP_CLIENT_ID>` = the Entra
 app's Application (client) ID.
 
-**Pick the path for your client:** if your users are on **Claude Code**, use the token helper in
-**9b** — that's the path for this deployment. Section **9a (VS Code)** is included as a *reference*,
-not a recommendation: it proves the server-side Entra configuration is correct, because a client
-that implements Entra natively signs in seamlessly with zero extra config. That's what isolates the
-Claude Code limitation as a client-side gap (see the callout at the end), not a gateway/config problem.
+**Primary path for Claude Code users: section 9b** — the Entra DCR proxy handles the full browser
+OAuth flow automatically. Section **9a (VS Code)** is included as a *reference/control case*: a
+client with native Entra support signs in with zero extra config, which confirms the gateway +
+app registration are correct before troubleshooting any client-specific issue.
 
 ### 9a. VS Code Copilot — reference: proof the Entra config is correct
 
@@ -343,10 +342,10 @@ Open the workspace → Copilot **Agent mode** → **Sign in with Microsoft** →
 azure-setup §1e (VS Code pre-authorized) **and** §1e-2 (public client + `http://localhost` redirect).
 **Verified working** end-to-end (interactive SSO → gateway → per-user credential injection).
 
-### 9b. Claude Code — DCR proxy (full OAuth, no helper script) — Milestone 3
+### 9b. Claude Code — full browser OAuth via DCR proxy
 
 With the Entra DCR proxy deployed (see [group-based-access.md §5](group-based-access.md#5-deploy-the-entra-dcr-proxy-enables-full-oauth-in-mcp-clients)),
-Claude Code completes a full browser OAuth flow automatically — no `headersHelper` or `az` session
+Claude Code completes a full browser OAuth flow automatically — no helper script or `az` session
 required:
 
 ```bash
@@ -355,25 +354,6 @@ claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
 
 On first connect, Claude Code opens a browser window. The user signs in with their Entra account
 and grants consent once. Subsequent connections are silent (token is refreshed automatically).
-
-> If the DCR proxy is not yet deployed, use the token helper fallback in **9b-fallback** below.
-
-### 9b-fallback. Claude Code — Entra token helper (Milestone 2, no DCR proxy)
-
-```bash
-cat > ~/entra-mcp-token.sh <<'EOF'
-#!/bin/bash
-tok=$(az account get-access-token --scope "api://<APP_CLIENT_ID>/access" --query accessToken -o tsv)
-printf '{"Authorization":"Bearer %s"}' "$tok"
-EOF
-chmod +x ~/entra-mcp-token.sh
-
-claude mcp add-json pov-gateway \
-  '{"type":"http","url":"<GATEWAY_URL>","headersHelper":"/absolute/path/to/entra-mcp-token.sh"}'
-```
-`/mcp` connects (no browser). The helper re-runs on reconnect / 401, so the token stays fresh as
-long as the user's `az` session is alive (`az login` once per user; the Azure CLI is pre-authorized
-in §1e).
 
 ### 9c. Any other HTTP MCP client — static bearer fallback
 
@@ -388,24 +368,20 @@ hourly (or via an equivalent helper).
   - macOS `/Library/Application Support/ClaudeCode/managed-mcp.json`
   - Linux/WSL `/etc/claude-code/managed-mcp.json`
   - Windows `C:\Program Files\ClaudeCode\managed-mcp.json`
-  Same JSON as 9b (`url` + `headersHelper`, and ship the helper script too). It auto-loads — no
-  per-user `claude mcp add`, no trust prompt. Optionally restrict to only managed servers with
+  Push a `managed-mcp.json` with just the gateway URL — no helper script needed:
+  ```json
+  { "mcpServers": { "pov-gateway": { "type": "http", "url": "<GATEWAY_URL>" } } }
+  ```
+  It auto-loads — no per-user `claude mcp add`, no trust prompt. Each user is prompted to sign in
+  via browser on first connect. Optionally restrict to only managed servers with
   `allowedMcpServers` + `allowManagedMcpServersOnly: true` in managed settings.
 
-> **Why Claude Code can't do interactive Entra sign-in — and why it's not a gateway problem.**
-> Two upstream incompatibilities between Claude Code's MCP OAuth and Microsoft Entra:
-> 1. Claude Code expects the authorization server to support **RFC 7591 Dynamic Client
->    Registration**; Entra does not (its DCR is gated). Symptom: *"does not support dynamic client
->    registration."*
-> 2. Even with a pre-registered `--client-id`, Claude Code sends an **RFC 8707 `resource`
->    parameter** — the gateway URL, taken from the gateway's RFC 9728 metadata — which Entra
->    rejects against the app-scoped scope. Symptom: **`AADSTS9010010`**. This is not fixable at the
->    sidecar or gateway (the data plane sets `resource` to the gateway URL per RFC 9728 §3.3) nor in
->    Entra (the gateway URL can't be registered as an app identifier).
->
-> VS Code Copilot avoids both by using its **native Microsoft auth provider** instead of the
-> generic MCP OAuth flow. Until Anthropic ships an Entra-compatible client, Claude Code uses the
-> token helper (9b). This is a client ↔ identity-provider gap, **not** a limitation of the gateway.
+> **How the DCR proxy bridges Claude Code ↔ Entra.**
+> Claude Code's MCP OAuth expects RFC 7591 Dynamic Client Registration, which Entra doesn't expose
+> publicly. The Entra DCR proxy (deployed at `/dcr` on the DP host) implements the RFC 7591
+> endpoint and translates requests into Entra's gated registration API — so Claude Code can
+> self-register and complete the PKCE flow without any per-user script or pre-registered client ID.
+> VS Code Copilot bypasses this entirely by using its native Microsoft auth provider.
 
 ## Troubleshooting
 
@@ -419,6 +395,26 @@ hourly (or via an equivalent helper).
 | GitHub call 401 / `get_connection_headers` empty | No `github-pat-<oid>` secret in Key Vault for that user | `az keyvault secret set --vault-name <kv> --name github-pat-<oid> --value <pat>` |
 | GitHub call `401 Bad credentials` (injection worked, GitHub rejected) | The `github-pat-<oid>` secret is expired/invalid or lacks scope | Store a valid PAT with the needed scopes in Key Vault |
 | Client OAuth: `AADSTS65001` (no consent) | The client's app-id isn't pre-authorized for the `access` scope | Pre-authorize the client id (azure-setup §1e); for CLI, the Azure CLI client |
-| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | Entra has no DCR; the client tried to self-register | Use the token helper (Step 9b) — or VS Code Copilot for interactive |
-| Client OAuth: `AADSTS9010010` (resource ≠ scope) | Claude Code's RFC 8707 `resource` param (gateway URL) can't reconcile with the Entra scope | Not fixable on Entra/gateway — use the token helper (9b) or VS Code (9a) |
+| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | DCR proxy not reachable or `DCR_PROXY_URL` not set in `sidecar-config` | Verify `DCR_PROXY_URL=https://mcp-gw-dp.<domain>/dcr` in the sidecar env; confirm the proxy Route is up |
+| Client OAuth: `AADSTS9010010` (resource ≠ scope) | DCR proxy not routing correctly — Claude Code is hitting Entra directly | Same as above — check `DCR_PROXY_URL` and the proxy deployment |
 | Key Vault access denied | SP lacks `Key Vault Secrets User`, or KV is in access-policy (not RBAC) mode | Grant the role on the vault; switch KV to RBAC |
+
+**Bypassing the DCR proxy for diagnostics** — if you're seeing auth errors and aren't sure
+whether the issue is the proxy or the gateway/Entra config, bypass the proxy entirely with a
+static token to confirm the core stack is sound:
+
+```bash
+cat > ~/entra-mcp-token.sh <<'EOF'
+#!/bin/bash
+tok=$(az account get-access-token --scope "api://<APP_CLIENT_ID>/access" --query accessToken -o tsv)
+printf '{"Authorization":"Bearer %s"}' "$tok"
+EOF
+chmod +x ~/entra-mcp-token.sh
+
+claude mcp add-json pov-gateway \
+  '{"type":"http","url":"<GATEWAY_URL>","headersHelper":"/absolute/path/to/entra-mcp-token.sh"}'
+```
+
+If tools load with the helper but not with the DCR proxy, the proxy or its `DCR_PROXY_URL` env
+var is the issue. If tools don't load with either, the problem is in the gateway config or Entra
+app registration.

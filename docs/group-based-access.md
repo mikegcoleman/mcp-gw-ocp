@@ -9,12 +9,16 @@ and the sidecar's `authenticate()` tool already extracts and returns them to the
 
 ---
 
-## Demo scenario
+## Scenario
 
-| User | Email | Role | Sees |
-|------|-------|------|------|
-| alice | `msmikecol@hotmail.com` | `mcp-team-a` | DuckDuckGo + GitHub + **Granola** (`team-a-granola`) |
-| bob | `mike.coleman@docker.co` | `mcp-team-b` | DuckDuckGo + GitHub + **Notion** (`team-b-notion`) |
+| User | Role | Sees |
+|------|------|------|
+| user-a | `mcp-team-a` | DuckDuckGo + GitHub + **Granola** (`team-a-granola`) |
+| user-b | `mcp-team-b` | DuckDuckGo + GitHub + **Notion** (`team-b-notion`) |
+
+Substitute `user-a` and `user-b` with actual Entra users in your tenant. They can be existing
+accounts or new ones created for this deployment — the only requirement is that each is assigned
+to the correct Entra App Role (see Step 2).
 
 DuckDuckGo and GitHub are open to all authenticated users. Granola and Notion are team-scoped:
 a user without the matching role simply does not see those servers in their tool list (no error,
@@ -54,8 +58,8 @@ tools/list response contains only the servers the user's roles permit
 server that doesn't match an allow rule is hidden from that user. This means:
 
 - duckduckgo and github have unconditional allow rules (no `role` field) → visible to everyone
-- team-a-granola has `role: mcp-team-a` → visible only to alice
-- team-b-notion has `role: mcp-team-b` → visible only to bob
+- team-a-granola has `role: mcp-team-a` → visible only to members of `mcp-team-a`
+- team-b-notion has `role: mcp-team-b` → visible only to members of `mcp-team-b`
 
 **OAuth PKCE for team servers:** Granola and Notion use `auth_delegation: gateway` with OAuth.
 On the first tool call, the upstream returns 401 and the gateway's OAuth broker calls the sidecar
@@ -78,14 +82,14 @@ assign each group to its app role.
 ```bash
 APPID=<your-application-client-id>
 
-# As alice (msmikecol@hotmail.com — expects mcp-team-a):
-az login --allow-no-subscriptions --username msmikecol@hotmail.com
+# As user-a (<USER_A_EMAIL> — expects mcp-team-a):
+az login --allow-no-subscriptions --username <USER_A_EMAIL>
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
 # Expected: ["MCPGateway.User", "mcp-team-a"]
 
-# As bob (mike.coleman@docker.co — expects mcp-team-b):
-az login --allow-no-subscriptions --username mike.coleman@docker.co
+# As user-b (<USER_B_EMAIL> — expects mcp-team-b):
+az login --allow-no-subscriptions --username <USER_B_EMAIL>
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
 # Expected: ["MCPGateway.User", "mcp-team-b"]
@@ -125,30 +129,30 @@ Use the MCP session handshake (same pattern as README Step 11c) with each user's
 GATEWAY_URL=$(oc get mcpgw pov-gateway -n mcp-gateway -o jsonpath='{.status.endpoints.sk}')
 APPID=<your-application-client-id>
 
-# ---- Test as alice (msmikecol@hotmail.com — should see duckduckgo, github, granola, NOT notion) ----
-az login --allow-no-subscriptions --username msmikecol@hotmail.com
-ALICE_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
+# ---- Test as user-a (<USER_A_EMAIL> — should see duckduckgo, github, granola, NOT notion) ----
+az login --allow-no-subscriptions --username <USER_A_EMAIL>
+USER_A_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
 
 SID=$(curl -sS -k -D - -o /dev/null -X POST "$GATEWAY_URL" \
-  -H "Authorization: Bearer $ALICE_TOKEN" -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $USER_A_TOKEN" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' \
   | tr -d '\r' | awk -F': ' 'tolower($1)=="mcp-session-id"{print $2}')
 
-curl -sS -k -o /dev/null -X POST "$GATEWAY_URL" -H "Authorization: Bearer $ALICE_TOKEN" \
+curl -sS -k -o /dev/null -X POST "$GATEWAY_URL" -H "Authorization: Bearer $USER_A_TOKEN" \
   -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 
-curl -sS -k -X POST "$GATEWAY_URL" -H "Authorization: Bearer $ALICE_TOKEN" \
+curl -sS -k -X POST "$GATEWAY_URL" -H "Authorization: Bearer $USER_A_TOKEN" \
   -H "Mcp-Session-Id: $SID" -H 'Accept: application/json, text/event-stream' \
   -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | sed -n 's/^data: //p' | jq '[.result.tools[].name]'
 # Expect: duckduckgo__search, github__*, team-a-granola__* present; NO team-b-notion__* tools
 
-# ---- Test as bob (mike.coleman@docker.co — should see duckduckgo, github, team-b-notion, NOT team-a-granola) ----
-az login --allow-no-subscriptions --username mike.coleman@docker.co
-BOB_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
-# ... repeat the same handshake with BOB_TOKEN ...
+# ---- Test as user-b (<USER_B_EMAIL> — should see duckduckgo, github, team-b-notion, NOT team-a-granola) ----
+az login --allow-no-subscriptions --username <USER_B_EMAIL>
+USER_B_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv)
+# ... repeat the same handshake with USER_B_TOKEN ...
 # Expect: duckduckgo__search, github__*, team-b-notion__* present; NO team-a-granola__* tools
 ```
 
@@ -247,8 +251,8 @@ claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
 ```
 
 On first connection the client opens a browser window to sign in with the user's Entra account.
-Each user's tool list will differ based on their role assignment — alice sees Granola, bob sees
-Notion, both see DuckDuckGo and GitHub.
+Each user's tool list will differ based on their role assignment — `mcp-team-a` members see
+Granola, `mcp-team-b` members see Notion, everyone sees DuckDuckGo and GitHub.
 
 ---
 
@@ -277,18 +281,19 @@ after connecting:
 
 ## 7. GitOps pipeline — team-managed changes via GitHub Actions
 
-The `deploy-team-a.yml` workflow lets alice (team-a owner) push changes to this repo and
-have them applied to the cluster automatically — no manual `oc apply` needed.
+The `deploy-team-a.yml` workflow lets the team-a owner push changes to this repo and have them
+applied to the cluster automatically — no manual `oc apply` needed.
 
-**Ownership split:** alice owns her catalog ConfigMap and policy ConfigMap. The MCPGateway CR
-(`mcpgateway.yaml`) and GatewayServiceConfig remain IT-owned; alice's pipeline never touches them.
+**Ownership split:** the team-a owner manages their catalog ConfigMap and policy ConfigMap. The
+MCPGateway CR (`mcpgateway.yaml`) and GatewayServiceConfig remain IT-owned; the team pipeline
+never touches them.
 
 ```
-alice pushes ──► catalog-team-a.yaml          (team-a-granola catalog entry)
-               + manifests/team-a-policy.yaml  (tool-level deny rules)
+team-a pushes ──► catalog-team-a.yaml          (team-a-granola catalog entry)
+                + manifests/team-a-policy.yaml  (tool-level deny rules)
 
-IT controls  ──► mcpgateway.yaml               (server visibility + OAuth primordials)
-               + gatewayserviceconfig.yaml      (plugin wiring, Entra config)
+IT controls   ──► mcpgateway.yaml               (server visibility + OAuth primordials)
+                + gatewayserviceconfig.yaml      (plugin wiring, Entra config)
 ```
 
 ### 7a. Apply the pipeline RBAC
@@ -319,7 +324,7 @@ Add two secrets to the GitHub repo (**Settings → Secrets and variables → Act
 
 On every push to `main` that touches `catalog-team-a.yaml`, `manifests/team-a-policy.yaml`,
 or `manifests/mcpserver-team-a-*.yaml`, the workflow:
-1. Applies `catalog-team-a.yaml` (catalog ConfigMap for alice's servers)
+1. Applies `catalog-team-a.yaml` (catalog ConfigMap for team-a's servers)
 2. Applies `manifests/team-a-policy.yaml` (tool-level deny rules — see §8)
 3. Applies any `mcpserver-team-a-*.yaml` manifests (for in-cluster servers)
 4. Restarts the control plane to pick up catalog changes
@@ -403,14 +408,14 @@ sidecar or DP restart needed**. The sidecar re-reads the files on every `evaluat
 
 ### Demo flow — self-service tool block
 
-1. Alice connects → `team-a-granola__list_meetings` works ✓
+1. user-a connects → `team-a-granola__list_meetings` works ✓
 2. Uncomment the deny rule in `manifests/team-a-policy.yaml`, push to `main`
 3. `deploy-team-a.yml` applies the ConfigMap update (~30s including CP rollout for catalog)
-4. Within ~60s the kubelet syncs the volume; alice's next `list_meetings` call is **denied**
+4. Within ~60s the kubelet syncs the volume; user-a's next `list_meetings` call is **denied**
    (response includes the `reason` string from the rule)
 5. Revert: comment out the rule, push → pipeline applies → tool restored within ~60s
 
-Alice can self-serve this without touching `mcpgateway.yaml` or involving IT.
+The team-a owner can self-serve this without touching `mcpgateway.yaml` or involving IT.
 
 ---
 

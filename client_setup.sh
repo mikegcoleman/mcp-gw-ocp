@@ -11,8 +11,8 @@
 #   GATEWAY_URL=<url> ./client_setup.sh            # skip oc lookup
 #
 # Users:
-#   alice  msmikecol@hotmail.com   mcp-team-a → GitHub + DuckDuckGo + Opine
-#   bob    mike.coleman@docker.co  mcp-team-b → GitHub + DuckDuckGo + Granola
+#   alice  msmikecol@hotmail.com   mcp-team-a → GitHub + DuckDuckGo + Granola
+#   bob    mike.coleman@docker.co  mcp-team-b → GitHub + DuckDuckGo + Notion
 set -euo pipefail
 
 BASE_DIR="${BASE_DIR:-$HOME/src}"
@@ -57,8 +57,8 @@ setup_user bob
 
 echo "Both sandboxes ready."
 echo ""
-echo "  alice → ~/src/alice  (msmikecol@hotmail.com,  mcp-team-a → Opine)"
-echo "  bob   → ~/src/bob    (mike.coleman@docker.co, mcp-team-b → Granola)"
+echo "  alice → ~/src/alice  (msmikecol@hotmail.com,  mcp-team-a → Granola)"
+echo "  bob   → ~/src/bob    (mike.coleman@docker.co, mcp-team-b → Notion)"
 echo ""
 echo "Each user will be prompted to sign in with their Entra account the first"
 echo "time Claude Code connects to the gateway."

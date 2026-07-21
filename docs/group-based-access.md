@@ -275,7 +275,85 @@ after connecting:
 
 ---
 
-## 7. Modifying the policy
+## 7. GitOps pipeline — team-managed changes via GitHub Actions
+
+The `deploy-team-a.yml` workflow lets alice (team-a owner) push changes to this repo and
+have them applied to the cluster automatically — no manual `oc apply` needed.
+
+### 7a. Apply the pipeline RBAC
+
+```bash
+kubectl apply -f manifests/rbac-pipeline.yaml -n mcp-gateway
+```
+
+This creates the `team-a-pipeline` ServiceAccount with scoped RBAC:
+- MCPServer full CRUD (for in-cluster server pods)
+- MCPGateway / MCPEnvironment / ConfigMap patch (to update policy rules and catalog)
+
+### 7b. Mint a token and add GitHub secrets
+
+```bash
+# Run on the cluster (or use oc):
+OCP_TOKEN_TEAM_A=$(kubectl create token team-a-pipeline -n mcp-gateway --duration=8760h)
+OCP_SERVER=$(oc whoami --show-server)
+```
+
+Add two secrets to the GitHub repo (**Settings → Secrets and variables → Actions**):
+
+| Secret | Value |
+|--------|-------|
+| `OCP_SERVER` | output of `oc whoami --show-server` |
+| `OCP_TOKEN_TEAM_A` | output of the `kubectl create token` command above |
+
+### 7c. How it works
+
+On every push to `main` that touches `catalog-and-gateway.yaml` or
+`manifests/mcpserver-team-a-*.yaml`, the workflow:
+1. Applies the catalog ConfigMap + MCPGateway CR
+2. Applies any `mcpserver-team-a-*.yaml` manifests (for in-cluster servers)
+3. Restarts the control plane to pick up catalog changes
+4. Waits for the gateway to reach `Active`
+
+Policy-only changes (adding/removing rules in `catalog-and-gateway.yaml` without
+changing the catalog ConfigMap) still trigger a CP restart — safe and idempotent.
+
+---
+
+## 8. Tool-level access control — blocking individual tools
+
+Server-level rules (`serverName`) control whether a user sees a server at all.
+Tool-level rules let you block a specific tool within a server a user can otherwise access.
+
+### Rule syntax
+
+```yaml
+- serverName: team-a-granola   # which server
+  toolName: list_meetings       # backend tool name (NOT the prefixed "team-a-granola__list_meetings")
+  action: invoke                # block the call, not just discovery
+  effect: deny
+  reason: "list_meetings temporarily restricted by central IT"
+```
+
+**Deny-wins semantics:** a `deny` rule overrides any matching `allow` rule. Alice has an
+allow rule for `team-a-granola` (as `mcp-team-a`), but adding this deny blocks `list_meetings`
+for everyone — including her — regardless of role.
+
+To block for a specific role only, add `role: mcp-team-a` to the deny rule.
+
+### Demo flow
+
+1. Alice connects → `team-a-granola__list_meetings` works ✓
+2. Push a commit adding the deny rule above to `catalog-and-gateway.yaml`
+3. `deploy-team-a.yml` triggers in GHA (~30s for CP rollout)
+4. Alice calls `list_meetings` → **blocked by policy** (error includes the `reason` string)
+5. Revert: remove the deny rule, push → GHA applies → tool works again
+
+No gateway or sidecar restart needed — the DP picks up MCPGateway policy changes
+immediately once the CR is applied.
+
+---
+
+## 9. Modifying the policy
 
 To add more servers or roles, extend `policies.rules` in `catalog-and-gateway.yaml` and
 re-apply. The gateway's DP picks up policy changes immediately — no restart needed for

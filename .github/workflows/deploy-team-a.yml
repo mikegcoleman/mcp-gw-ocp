@@ -1,0 +1,76 @@
+name: Deploy — Team A
+
+# Applies catalog-and-gateway.yaml and any team-a MCPServer CRs to the ARO cluster.
+# Triggered by alice (msmikecol@hotmail.com) pushing to main.
+#
+# Required GitHub repo secrets:
+#   OCP_SERVER        — OpenShift API server URL (oc whoami --show-server)
+#   OCP_TOKEN_TEAM_A  — team-a-pipeline SA token
+#                       (kubectl create token team-a-pipeline -n mcp-gateway --duration=8760h)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'catalog-and-gateway.yaml'
+      - 'manifests/mcpserver-team-a-*.yaml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          mkdir -p $HOME/.kube
+          cat > $HOME/.kube/config <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              server: ${{ secrets.OCP_SERVER }}
+              insecure-skip-tls-verify: true
+            name: aro
+          contexts:
+          - context:
+              cluster: aro
+              namespace: mcp-gateway
+              user: team-a-pipeline
+            name: aro
+          current-context: aro
+          users:
+          - name: team-a-pipeline
+            user:
+              token: ${{ secrets.OCP_TOKEN_TEAM_A }}
+          EOF
+
+      - name: Apply catalog + MCPGateway
+        run: kubectl apply -n mcp-gateway -f catalog-and-gateway.yaml
+
+      - name: Apply team-a MCPServer CRs (if any)
+        run: |
+          shopt -s nullglob
+          files=(manifests/mcpserver-team-a-*.yaml)
+          if [ ${#files[@]} -gt 0 ]; then
+            kubectl apply -n mcp-gateway -f "${files[@]}"
+          else
+            echo "No team-a MCPServer CRs found, skipping."
+          fi
+
+      - name: Restart control plane (picks up catalog changes)
+        run: |
+          kubectl rollout restart deploy/mcp-gw-cp -n mcp-gateway
+          kubectl rollout status deploy/mcp-gw-cp -n mcp-gateway --timeout=120s
+
+      - name: Wait for gateway Active
+        run: |
+          kubectl wait mcpgateway/pov-gateway -n mcp-gateway \
+            --for=jsonpath='{.status.phase}'=Active --timeout=90s
+
+      - name: Show gateway status
+        if: always()
+        run: |
+          kubectl get mcpgateway pov-gateway -n mcp-gateway \
+            -o jsonpath='phase={.status.phase}{"\n"}' 2>/dev/null || true

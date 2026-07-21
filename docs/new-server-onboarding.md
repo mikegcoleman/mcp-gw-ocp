@@ -10,7 +10,7 @@ Each file touched during onboarding, who owns it, and why.
 |------|---------|
 | `mcpgateway.yaml` | Server visibility rules — flip-to-deny policy engine that controls which teams see which servers and which OAuth primordials they can invoke |
 | `mcpenvironment.yaml` | Binds one or more catalog ConfigMaps into the gateway runtime; the gateway CP reads this at startup to know which catalogs to load |
-| `manifests/rbac-pipeline.yaml` | Creates the `team-X-pipeline` ServiceAccount with scoped RBAC (MCPServer CRUD + ConfigMap patch); the GHA pipeline authenticates as this SA |
+| `manifests/rbac-pipeline.yaml` | Creates the `team-X-pipeline` ServiceAccount with scoped RBAC (MCPServer CRUD + ConfigMap patch); the GHA pipeline authenticates as this SA — _specific to this PoV implementation_ |
 
 **Team-owned**
 

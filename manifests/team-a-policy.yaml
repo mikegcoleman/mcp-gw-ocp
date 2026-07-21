@@ -25,7 +25,7 @@ metadata:
 data:
   policy.yaml: |
     version: "1"
-    rules: []
+    # rules: []
     # --- DEMO: uncomment to block list_meetings ---
     rules:
       - serverName: team-a-granola

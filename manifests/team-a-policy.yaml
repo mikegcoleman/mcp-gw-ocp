@@ -25,10 +25,8 @@ metadata:
 data:
   policy.yaml: |
     version: "1"
-    rules: []
-    # --- DEMO: uncomment to block list_meetings ---
-    # rules:
-    #   - serverName: team-a-granola
-    #     toolName: list_meetings
-    #     effect: deny
-    #     reason: "list_meetings temporarily restricted by team-a policy"
+    rules:
+      - serverName: team-a-granola
+        toolName: list_meetings
+        effect: deny
+        reason: "list_meetings temporarily restricted by team-a policy"

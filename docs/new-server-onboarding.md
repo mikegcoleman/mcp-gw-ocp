@@ -1,79 +1,99 @@
 # Onboarding a New MCP Server
 
-Decision flow for adding a server under the group-based access model.
+## File reference
+
+Each file touched during onboarding, who owns it, and why.
+
+| File | Owner | Purpose |
+|------|-------|---------|
+| `mcpgateway.yaml` | IT | Server visibility rules — flip-to-deny policy engine that controls which teams see which servers and which OAuth primordials they can invoke |
+| `mcpenvironment.yaml` | IT | Binds one or more catalog ConfigMaps into the gateway runtime; the gateway CP reads this at startup to know which catalogs to load |
+| `catalog-team-X.yaml` | Team | Server connection details for this team's servers: URL, transport type, auth config, OAuth provider, allowed hosts |
+| `manifests/rbac-pipeline.yaml` | IT | Creates the `team-X-pipeline` ServiceAccount with scoped RBAC (MCPServer CRUD + ConfigMap patch); the GHA pipeline authenticates as this SA |
+| `manifests/mcpserver-team-X-NAME.yaml` | Team | MCPServer CR for in-cluster servers only; the operator watches these and creates a pod + Service for each one |
+| `manifests/team-X-policy.yaml` | Team | Tool-level deny rules read by the sidecar's `evaluate_policy` tool; runs after the MCPGateway CR allows the request — teams can restrict tools but cannot grant access |
+
+---
 
 ## Actor legend
 
 | Color | Owner | What they control |
 |-------|-------|-------------------|
-| Amber | IT / central ops | Entra setup, MCPGateway CR, pipeline RBAC, CP restarts |
+| Amber | IT / central ops | Entra setup, MCPGateway CR, MCPEnvironment, pipeline RBAC |
 | Pink | Team | MCPServer CRs, catalog ConfigMap, policy ConfigMap, GHA pipeline pushes |
 | Dark blue | — | Steps specific to this PoV guide |
 
+---
+
+## Flow
+
 ```mermaid
 flowchart TD
-    A([New MCP server request]) --> B{New team or\nexisting team?}
+    START([New MCP server request]) --> NEWTEAM{New team or\nexisting team?}
 
-    B -->|New team| C1[Create Entra App Role mcp-team-X\nin Azure app registration]
-    C1 --> C2[Create Entra Security Group\nAdd users to group\nAssign group to app role]
-    C2 --> C3[Create catalog-team-X.yaml ConfigMap\nUpdate mcpenvironment.yaml to reference it]
-    C3 --> C4[Apply pipeline RBAC\nkubectl apply -f manifests/rbac-pipeline.yaml\nMint team-X-pipeline SA token\nAdd OCP_SERVER + OCP_TOKEN_TEAM_X\nto GitHub Actions secrets\n⚙ specific to this environment]
+    NEWTEAM -->|New team| E1[Create Entra App Role mcp-team-X\nin Azure app registration]
+    E1 --> E2[Create Entra Security Group\nAdd users to group\nAssign group to app role]
+    E2 --> E3[Create catalog-team-X.yaml ConfigMap\nUpdate mcpenvironment.yaml to reference it]
+    E3 --> E4[Apply pipeline RBAC\nMint team-X-pipeline SA token\nAdd OCP_SERVER + OCP_TOKEN_TEAM_X\nto GitHub Actions secrets]
+    E4 --> GW
+    NEWTEAM -->|Existing team| GW
 
-    B -->|Existing team| E
-    C4 --> E
+    GW[Add visibility rule to mcpgateway.yaml\nserverName + role: mcp-team-X + effect: allow]
+    GW --> OAUTH{Server uses OAuth\ne.g. Granola, Notion?}
+    OAUTH -->|Yes| PRIM[Add invokePrimordial allow rules\nfor NAME-authorize + NAME-revoke-auth\nwith role: mcp-team-X in mcpgateway.yaml]
+    OAUTH -->|No| HANDOFF
+    PRIM --> HANDOFF
 
-    E{Where does\nthe server run?}
+    HANDOFF([ ── IT complete — team takes over ── ])
 
-    E -->|In-cluster\ne.g. GitHub, DuckDuckGo| F[Create MCPServer CR\nOperator deploys pod + Service]
-    E -->|External SaaS\ne.g. Granola, Notion| G[No MCPServer CR needed\nGateway proxies to remote URL]
+    HANDOFF --> LOC{In-cluster or\nexternal SaaS?}
+    LOC -->|In-cluster\ne.g. GitHub, DuckDuckGo| MCR[Create MCPServer CR\nmcpserver-team-X-NAME.yaml\nOperator deploys pod + Service]
+    LOC -->|External SaaS\ne.g. Granola, Notion| CAT
+    MCR --> CAT
 
-    F --> H[Add visibility rule to\nmcpgateway.yaml\nserverName + role: mcp-team-X\neffect: allow]
-    G --> H
+    CAT[Add server entry to catalog-team-X.yaml]
 
-    H --> I{Does the server\nuse OAuth?}
+    CAT --> CREDS{Credentials?}
+    CREDS -->|OAuth PKCE| OA[Add oauth.providers block\ngateway creates NAME-authorize primordial]
+    CREDS -->|Per-user PAT| PAT[Add auth_delegation: gateway\nLoad NAME-pat-OID secrets\ninto Azure Key Vault per user]
+    CREDS -->|None — public server| PUSH
 
-    I -->|Yes — SaaS with\nuser-level auth| J[Add invokePrimordial allow rules\nfor NAME-authorize + NAME-revoke-auth\nwith role: mcp-team-X in mcpgateway.yaml]
-    I -->|No| K
+    OA --> PUSH
+    PAT --> PUSH
 
-    J --> K[Add server entry to\ncatalog-team-X.yaml\nPush via GHA pipeline]
+    PUSH[Push via GHA pipeline\nPipeline handles CP restart automatically]
 
-    K --> L{How are upstream\ncredentials supplied?}
+    PUSH --> RESTRICT{Tool-level\nrestrictions needed?}
+    RESTRICT -->|Yes| POL[Add deny rules to\nteam-X-policy.yaml\nPush via GHA pipeline\nSidecar picks up within ~60s]
+    RESTRICT -->|No| DONE
+    POL --> DONE
 
-    L -->|OAuth PKCE\nSaaS handles auth| M[Add oauth.providers block\ngateway creates NAME-authorize primordial]
-    L -->|Per-user PAT\ne.g. GitHub| N[Add auth_delegation: gateway\nLoad NAME-pat-OID secrets\ninto Azure Key Vault per user]
-    L -->|No auth needed\npublic server| O
+    DONE([Server live for mcp-team-X members ✓])
 
-    M --> O[Restart CP deployment\nkubectl rollout restart deploy/mcp-gw-cp\nRequired to pick up catalog changes]
-    N --> O
+    style START fill:#e8f4f8,stroke:#2196F3,color:#000000
+    style DONE fill:#e8f5e9,stroke:#4CAF50,color:#000000
+    style HANDOFF fill:#f5f5f5,stroke:#9E9E9E,color:#555555
 
-    O --> P{Tool-level\nrestrictions needed?}
+    style E1 fill:#fff3e0,stroke:#FF9800,color:#000000
+    style E2 fill:#fff3e0,stroke:#FF9800,color:#000000
+    style E3 fill:#fff3e0,stroke:#FF9800,color:#000000
+    style E4 fill:#1565C0,stroke:#0D47A1,color:#ffffff
+    style GW fill:#fff3e0,stroke:#FF9800,color:#000000
+    style PRIM fill:#fff3e0,stroke:#FF9800,color:#000000
 
-    P -->|Yes| Q[Add deny rules to\nmanifests/team-X-policy.yaml\nPush via GHA pipeline\nSidecar picks up within ~60s\nno CP restart needed]
-    P -->|No| R
-
-    Q --> R([Server live for mcp-team-X members ✓])
-
-    style A fill:#e8f4f8,stroke:#2196F3,color:#000000
-    style R fill:#e8f5e9,stroke:#4CAF50,color:#000000
-    style C1 fill:#fff3e0,stroke:#FF9800,color:#000000
-    style C2 fill:#fff3e0,stroke:#FF9800,color:#000000
-    style C3 fill:#fff3e0,stroke:#FF9800,color:#000000
-    style C4 fill:#1565C0,stroke:#0D47A1,color:#ffffff
-    style H fill:#fff3e0,stroke:#FF9800,color:#000000
-    style J fill:#fff3e0,stroke:#FF9800,color:#000000
-    style O fill:#fff3e0,stroke:#FF9800,color:#000000
-    style F fill:#f3e5f5,stroke:#9C27B0,color:#000000
-    style K fill:#f3e5f5,stroke:#9C27B0,color:#000000
-    style M fill:#f3e5f5,stroke:#9C27B0,color:#000000
-    style N fill:#f3e5f5,stroke:#9C27B0,color:#000000
-    style Q fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style MCR fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style CAT fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style OA fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style PAT fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style PUSH fill:#f3e5f5,stroke:#9C27B0,color:#000000
+    style POL fill:#f3e5f5,stroke:#9C27B0,color:#000000
 ```
 
 ## Key rules
 
 - **MCPGateway CR is flip-to-deny.** A server is invisible unless an explicit `allow` rule exists for it.
-- **Catalog changes need a CP restart.** The control plane reads the catalog at startup.
-- **Policy changes do not.** The sidecar re-reads `/etc/mcp-policy/` on every call (kubelet syncs the ConfigMap volume within ~60s).
-- **Teams can only deny, not grant.** Their policy layer runs after the MCPGateway CR allows the request — it can add restrictions, not bypass server visibility.
+- **Catalog changes need a CP restart.** The control plane reads the catalog at startup — the GHA pipeline handles this automatically.
+- **Policy changes do not need a restart.** The sidecar re-reads `/etc/mcp-policy/` on every call; the kubelet syncs the ConfigMap volume within ~60s.
+- **Teams can only deny, not grant.** The sidecar policy layer runs after the MCPGateway CR allows the request.
 - **MCPServer names must be prefixed** with the team name (e.g. `team-a-granola`) — the pipeline SA token enforces this via RBAC.
-</thinking>
+- **Order is flexible.** IT can complete their steps independently of the team; the MCPGateway CR does not validate that a referenced MCPServer exists.

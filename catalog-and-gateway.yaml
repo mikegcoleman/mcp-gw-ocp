@@ -1,6 +1,7 @@
 # Milestone 3 — catalog + environment + gateway with group-based access.
 #   - ConfigMap:      declares all available MCP servers (duckduckgo, github, team-a-granola, team-b-notion).
 #   - MCPEnvironment: binds the catalog into the gateway runtime.
+# Pipeline: managed via .github/workflows/deploy-team-a.yml (push to main triggers apply).
 #   - MCPGateway:     activates servers and enforces group-scoped visibility via policies.rules.
 #
 # Server names are team-prefixed to prevent collisions when multiple teams add servers.

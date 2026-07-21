@@ -1,0 +1,20 @@
+# MCPEnvironment — managed by central IT.
+# Binds all team catalog ConfigMaps into the gateway runtime.
+# Apply: kubectl apply -n mcp-gateway -f mcpenvironment.yaml
+---
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPEnvironment
+metadata:
+  name: pov-env
+  namespace: mcp-gateway
+spec:
+  inlineCatalogs:
+    - configMapRef:
+        name: catalog-shared
+        key: catalog.yaml
+    - configMapRef:
+        name: catalog-team-a
+        key: catalog.yaml
+    - configMapRef:
+        name: catalog-team-b
+        key: catalog.yaml

@@ -1,11 +1,26 @@
-# Entra ID Authentication Sidecar — OpenShift Deployment
+# Entra ID Authentication Sidecar — OpenShift Template
 #
 # Before applying:
-#   1. Replace every PLACEHOLDER_* value (see docs/openshift-deployment.md Step 4)
-#   2. Create the azure-sp-credentials Secret (docs/openshift-deployment.md Step 3)
+#   1. Create the sidecar-config Secret (see docs/sidecar-entra.md Step 4a)
+#   2. Create the azure-sp-credentials Secret (see docs/sidecar-entra.md Step 3)
 #
-# Apply:
-#   oc apply -f manifests/sidecar-deployment.yaml
+# Apply (IMAGE is the sidecar image built via oc start-build):
+#   IMAGE=$(oc get istag mcp-entra-sidecar:latest -n mcp-gateway \
+#     -o jsonpath='{.image.dockerImageReference}')
+#   oc process -f manifests/sidecar-deployment.yaml -p IMAGE="$IMAGE" \
+#     | oc apply -n mcp-gateway -f -
+#
+# Safe to re-apply: all deployment-specific values live in the sidecar-config
+# and azure-sp-credentials Secrets — applying this template never overwrites them.
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: sidecar-deployment
+parameters:
+  - name: IMAGE
+    description: "Sidecar image (e.g. image-registry.openshift-image-registry.svc:5000/mcp-gateway/mcp-entra-sidecar:latest)"
+    required: true
+objects:
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -26,53 +41,32 @@ spec:
     spec:
       containers:
         - name: sidecar
-          image: PLACEHOLDER_IMAGE   # e.g. registry.example.com/mcp-gateway/mcp-entra-sidecar:latest
+          image: ${IMAGE}
           imagePullPolicy: Always
           ports:
             - name: mcp
               containerPort: 8080
+            - name: oauth
+              containerPort: 8082
+          # Deployment-specific values come from the sidecar-config Secret.
+          # Service principal credentials come from the azure-sp-credentials Secret.
+          # See docs/sidecar-entra.md Step 4a for how to create sidecar-config.
+          envFrom:
+            - secretRef:
+                name: sidecar-config
+            - secretRef:
+                name: azure-sp-credentials
           env:
-            # ── Entra JWT validation ─────────────────────────────────────────
-            - name: ENTRA_TENANT_ID
-              value: "PLACEHOLDER_TENANT_ID"       # Directory (tenant) ID from Azure
-            - name: ENTRA_AUDIENCE
-              value: "PLACEHOLDER_CLIENT_ID"       # Application (client) ID — v2.0 tokens use this as aud
-            - name: ENTRA_CLIENT_ID
-              value: "PLACEHOLDER_CLIENT_ID"       # Same value as ENTRA_AUDIENCE
-            - name: ENTRA_RESOURCE_URI
-              value: "PLACEHOLDER_RESOURCE_URI"    # e.g. api://mcp-gateway
-            - name: GATEWAY_RESOURCE
-              value: "PLACEHOLDER_GATEWAY_URL"     # e.g. https://mcp-gw.example.com
-
-            # ── Azure Key Vault access ───────────────────────────────────────
-            - name: AZURE_KEYVAULT_URL
-              value: "PLACEHOLDER_KEYVAULT_URL"    # e.g. https://mcp-gateway-kv.vault.azure.net/
+            # Static config — safe to keep inline, not deployment-specific.
             - name: MCP_GATEWAY_STORE_TYPE
               value: "kv"
-
-            # Service principal credentials — sourced from the azure-sp-credentials Secret.
-            # Create the secret first: see docs/openshift-deployment.md Step 3.
-            - name: AZURE_TENANT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: azure-sp-credentials
-                  key: AZURE_TENANT_ID
-            - name: AZURE_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: azure-sp-credentials
-                  key: AZURE_CLIENT_ID
-            - name: AZURE_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: azure-sp-credentials
-                  key: AZURE_CLIENT_SECRET
-
-            # ── OAuth broker (future phase — leave commented out for now) ────
-            # - name: MCP_GATEWAY_OAUTH_PORT
-            #   value: "5555"
-            # - name: MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL
-            #   value: "https://PLACEHOLDER_GATEWAY_URL/oauth"
+            # MCP_GATEWAY_OAUTH_PORT starts the sidecar's OAuth callback server.
+            # The gateway DP's oauth: plugin calls oauth-start-callback-server on the
+            # sidecar during startup; if this env var is absent the DP crashes on boot.
+            - name: MCP_GATEWAY_OAUTH_PORT
+              value: "8082"
+            - name: MCP_GATEWAY_POLICY_DIR
+              value: "/etc/mcp-policy"
 
           readinessProbe:
             httpGet:
@@ -108,11 +102,17 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /.cache
+            - name: team-a-policy
+              mountPath: /etc/mcp-policy
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: cache
           emptyDir: {}
+        - name: team-a-policy
+          configMap:
+            name: team-a-policy
 ---
 apiVersion: v1
 kind: Service
@@ -126,3 +126,6 @@ spec:
     - name: mcp
       port: 8080
       targetPort: 8080
+    - name: oauth
+      port: 8082
+      targetPort: 8082

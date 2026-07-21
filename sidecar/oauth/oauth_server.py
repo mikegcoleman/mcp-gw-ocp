@@ -483,6 +483,10 @@ async def oauth_authorize(
         server_url: str = "",
         disable_auto_open: bool = False,
         headers: dict[str, str] | None = None,
+        # The gateway also passes provider and registered_by. FastMCP strict-schema
+        # validation rejects unknown fields, so accept and ignore them here.
+        provider: str = "",
+        registered_by: str = "",
 ) -> dict:
     """Start OAuth authorization flow for an app. Returns auth URL."""
     logger.info(

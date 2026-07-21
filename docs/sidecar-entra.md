@@ -106,14 +106,45 @@ oc adm policy add-scc-to-user anyuid -z default -n mcp-gateway
 > and is already covered by the `nonroot-v2` grant from Milestone 1 — no extra grant needed for it.
 > If you rebuild the GitHub image to run non-root, you can skip this `anyuid` grant.
 
-## Step 4 — Edit the sidecar manifest and deploy it
+## Step 4 — Deploy the sidecar
 
-In `manifests/sidecar-deployment.yaml`, replace every `PLACEHOLDER_*` value (image ref, Entra
-tenant/client IDs, resource URI, gateway URL, Key Vault URL — see the table in
-[`azure-setup.md`](azure-setup.md)). Then deploy the sidecar (a standalone Deployment + Service):
+### Step 4a — Create the sidecar-config Secret
+
+All deployment-specific values (Entra IDs, gateway URL, Key Vault URL, OAuth callback URLs) live
+in a `sidecar-config` Secret. The manifest never contains these values, so re-applying it can
+never accidentally overwrite them.
 
 ```bash
-oc apply -f manifests/sidecar-deployment.yaml
+CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+
+oc create secret generic sidecar-config \
+  --from-literal=ENTRA_TENANT_ID=<TENANT_ID> \
+  --from-literal=ENTRA_AUDIENCE=<CLIENT_ID> \
+  --from-literal=ENTRA_CLIENT_ID=<CLIENT_ID> \
+  --from-literal=ENTRA_RESOURCE_URI=api://<CLIENT_ID> \
+  --from-literal=GATEWAY_RESOURCE=https://mcp-gw-dp.$CLUSTER_DOMAIN \
+  --from-literal=AZURE_KEYVAULT_URL=https://<KV_NAME>.vault.azure.net/ \
+  --from-literal=DCR_PROXY_URL=https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr \
+  --from-literal=MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL=https://mcp-sidecar-oauth.$CLUSTER_DOMAIN \
+  -n mcp-gateway
+```
+
+See [`azure-setup.md`](azure-setup.md) for where each value comes from. Leave `DCR_PROXY_URL`
+and `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL` as empty strings (`--from-literal=DCR_PROXY_URL=`)
+for Milestone 2 — they are required for Milestone 3.
+
+### Step 4b — Deploy the sidecar
+
+`manifests/sidecar-deployment.yaml` is an OpenShift Template — it requires an `IMAGE` parameter
+(the sidecar image you built in Step 1B) and reads all config from the Secrets above.
+
+```bash
+IMAGE=$(oc get istag mcp-entra-sidecar:latest -n mcp-gateway \
+  -o jsonpath='{.image.dockerImageReference}')
+
+oc process -f manifests/sidecar-deployment.yaml -p IMAGE="$IMAGE" \
+  | oc apply -n mcp-gateway -f -
+
 oc rollout status deploy/mcp-entra-sidecar -n mcp-gateway
 ```
 
@@ -312,10 +343,23 @@ Open the workspace → Copilot **Agent mode** → **Sign in with Microsoft** →
 azure-setup §1e (VS Code pre-authorized) **and** §1e-2 (public client + `http://localhost` redirect).
 **Verified working** end-to-end (interactive SSO → gateway → per-user credential injection).
 
-### 9b. Claude Code — Entra token helper (verified working)
+### 9b. Claude Code — DCR proxy (full OAuth, no helper script) — Milestone 3
 
-Claude Code's MCP OAuth can't complete against Entra (see the callout below), so it authenticates
-with an Entra token supplied by an auto-refreshing helper script:
+With the Entra DCR proxy deployed (see [group-based-access.md §5](group-based-access.md#5-deploy-the-entra-dcr-proxy-enables-full-oauth-in-mcp-clients)),
+Claude Code completes a full browser OAuth flow automatically — no `headersHelper` or `az` session
+required:
+
+```bash
+claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
+```
+
+On first connect, Claude Code opens a browser window. The user signs in with their Entra account
+and grants consent once. Subsequent connections are silent (token is refreshed automatically).
+
+> If the DCR proxy is not yet deployed, use the token helper fallback in **9b-fallback** below.
+
+### 9b-fallback. Claude Code — Entra token helper (Milestone 2, no DCR proxy)
+
 ```bash
 cat > ~/entra-mcp-token.sh <<'EOF'
 #!/bin/bash
@@ -329,11 +373,7 @@ claude mcp add-json pov-gateway \
 ```
 `/mcp` connects (no browser). The helper re-runs on reconnect / 401, so the token stays fresh as
 long as the user's `az` session is alive (`az login` once per user; the Azure CLI is pre-authorized
-in §1e). One-shot static alternative (expires ~1 h):
-```bash
-claude mcp add --transport http pov-gateway <GATEWAY_URL> \
-  --header "Authorization: Bearer $(az account get-access-token --scope api://<APP_CLIENT_ID>/access --query accessToken -o tsv)"
-```
+in §1e).
 
 ### 9c. Any other HTTP MCP client — static bearer fallback
 

@@ -1,0 +1,83 @@
+# Team B MCP server catalog — managed by bob (mike.coleman@docker.co).
+# Contains servers visible only to mcp-team-b members.
+# Apply: kubectl apply -n mcp-gateway -f catalog-team-b.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-team-b
+  namespace: mcp-gateway
+data:
+  catalog.yaml: |
+    name: team-b-catalog
+    displayName: Team B MCP Servers
+    registry:
+      team-b-notion:
+        name: team-b-notion
+        title: Notion (Team B)
+        description: Notion workspace access — managed by team-b
+        type: remote
+        auth_delegation: gateway
+        remote:
+          url: https://mcp.notion.com/mcp
+          transport_type: streamable-http
+        oauth:
+          providers:
+            - provider: notion
+        tools:
+          - name: search
+            description: Search pages and databases across the user's Notion workspace.
+            inputSchema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: Text to search for.
+                filter:
+                  type: object
+                  description: Optional filter by object type (page or database).
+          - name: retrieve_a_page
+            description: Retrieve a Notion page and its properties by page ID.
+            inputSchema:
+              type: object
+              required: [page_id]
+              properties:
+                page_id:
+                  type: string
+                  description: The Notion page ID.
+          - name: create_a_page
+            description: Create a new page in a Notion workspace or as a child of an existing page or database.
+            inputSchema:
+              type: object
+              required: [parent, properties]
+              properties:
+                parent:
+                  type: object
+                  description: Parent page or database object.
+                properties:
+                  type: object
+                  description: Page property values.
+          - name: retrieve_block_children
+            description: List all child blocks of a page or block.
+            inputSchema:
+              type: object
+              required: [block_id]
+              properties:
+                block_id:
+                  type: string
+                  description: The block (or page) ID whose children to retrieve.
+          - name: append_block_children
+            description: Append new content blocks to a Notion page or block.
+            inputSchema:
+              type: object
+              required: [block_id, children]
+              properties:
+                block_id:
+                  type: string
+                  description: The block (or page) ID to append content to.
+                children:
+                  type: array
+                  description: Array of block objects to append.
+        allowHosts:
+          - mcp.notion.com:443
+          - api.notion.com:443

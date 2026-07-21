@@ -1,0 +1,124 @@
+# OpenShift Template for the Entra DCR Proxy.
+# Bridges RFC 7591 Dynamic Client Registration to Entra ID, enabling MCP clients
+# (Claude Code, Claude Desktop, VS Code) to complete a full OAuth PKCE flow against
+# Entra without pre-registering each client manually.
+#
+# Prerequisites:
+#   - Milestone 2 sidecar is running
+#   - K8s secret `entra-dcr-proxy-credentials` exists (azure-setup.md §1h)
+#   - ghcr-pull-secret exists in the namespace (from Milestone 1)
+#
+# Apply with:
+#   export CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+#   oc process -f manifests/entra-dcr-proxy.yaml -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
+#     | oc apply -n mcp-gateway -f -
+#
+# After applying, the proxy is reachable at:
+#   https://mcp-gw-dp.<CLUSTER_DOMAIN>/dcr
+#
+# NOTE: runs one replica — client registrations are in-memory. Clients re-register
+# automatically on pod restart (fully transparent to the user).
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: entra-dcr-proxy
+parameters:
+  - name: CLUSTER_DOMAIN
+    description: >-
+      Cluster ingress wildcard domain. Get it with:
+      oc get ingresses.config cluster -o jsonpath='{.spec.domain}'
+    required: true
+  - name: DCR_PROXY_IMAGE
+    description: >-
+      DCR proxy image reference. Defaults to the image built into the cluster's internal
+      registry via `oc new-build` (see group-based-access.md §5). Override if pushing to
+      an external registry.
+    required: true
+    value: "image-registry.openshift-image-registry.svc:5000/mcp-gateway/entra-dcr-proxy:latest"
+objects:
+  - apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: entra-dcr-proxy
+      namespace: mcp-gateway
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: entra-dcr-proxy
+      template:
+        metadata:
+          labels:
+            app: entra-dcr-proxy
+        spec:
+          containers:
+            - name: proxy
+              image: "${DCR_PROXY_IMAGE}"
+              ports:
+                - containerPort: 8080
+              env:
+                - name: ENTRA_TENANT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: entra-dcr-proxy-credentials
+                      key: entra-tenant-id
+                - name: PROXY_ENTRA_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: entra-dcr-proxy-credentials
+                      key: dcr-proxy-client-id
+                - name: PROXY_ENTRA_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: entra-dcr-proxy-credentials
+                      key: dcr-proxy-client-secret
+                - name: ENTRA_APP_CLIENT_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: entra-dcr-proxy-credentials
+                      key: entra-app-client-id
+                - name: PROXY_BASE_URL
+                  value: "https://mcp-gw-dp.${CLUSTER_DOMAIN}/dcr"
+              livenessProbe:
+                httpGet:
+                  path: /health
+                  port: 8080
+                initialDelaySeconds: 5
+                periodSeconds: 30
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: entra-dcr-proxy
+      namespace: mcp-gateway
+    spec:
+      selector:
+        app: entra-dcr-proxy
+      ports:
+        - port: 8080
+          targetPort: 8080
+  # Exposed under /dcr on the existing DP hostname — no new DNS entry or certificate needed.
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: entra-dcr-proxy
+      namespace: mcp-gateway
+      annotations:
+        haproxy.router.openshift.io/rewrite-target: /
+    spec:
+      host: "mcp-gw-dp.${CLUSTER_DOMAIN}"
+      path: /dcr
+      to:
+        kind: Service
+        name: entra-dcr-proxy
+      port:
+        targetPort: 8080
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect

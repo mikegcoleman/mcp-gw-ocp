@@ -27,6 +27,13 @@ delivered with the **Entra sidecar** (source under `sidecar/`) — a FastMCP ser
 over HTTP, runs as its own Deployment, and is wired into the data plane via `dataPlane.pluginConfig`.
 See the dedicated Milestone 2 section below.
 
+**Milestone 3 (built — see [`docs/group-based-access.md`](docs/group-based-access.md)):**
+group-based server visibility via Entra App Roles + `MCPGateway.spec.policies.rules`. Adds a
+GitOps pipeline (alice's GHA workflow) plus a **sidecar policy lane** (`evaluate_policy` tool)
+so teams can self-serve tool-level deny rules via a ConfigMap without touching IT-owned CRs.
+Demo users: alice (`msmikecol@hotmail.com`, mcp-team-a → Granola) and
+bob (`mike.coleman@docker.co`, mcp-team-b → Notion); both see DuckDuckGo + GitHub.
+
 ## Deployment architecture (two-phase, operator-driven)
 
 ```
@@ -57,9 +64,18 @@ and **no `gateway-service` subchart**.
 | `docs/sidecar-entra.md` | Milestone 2 guide (Entra auth + per-user Key Vault creds), continues from the README. |
 | `docs/azure-setup.md` | M2 Azure prerequisites (Portal steps + a scripted `az` CLI appendix). |
 | `mcpserver-github.yaml` | M2 MCPServer CR — GitHub server (per-user PAT injection; `auth_delegation: gateway`). |
-| `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — the one standalone component. |
-| `sidecar/` | M2 Entra sidecar source (Python/FastMCP) + Dockerfile. |
+| `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — OpenShift Template; requires `IMAGE` param. All env config comes from `sidecar-config` + `azure-sp-credentials` Secrets. Apply via `oc process -f … -p IMAGE=… \| oc apply -f -`. |
+| `sidecar/` | M2/M3 Entra sidecar source (Python/FastMCP) + Dockerfile. |
 | `servers/github/` | M2 GitHub MCP server Dockerfile (builds `github/github-mcp-server` from upstream). |
+| `docs/group-based-access.md` | M3 guide — group-based server visibility + GitOps pipeline + sidecar policy lane. |
+| `catalog-team-a.yaml` | M3 alice's catalog ConfigMap (team-a-granola + shared servers). Applied by alice's GHA pipeline. |
+| `catalog-team-b.yaml` | M3 bob's catalog ConfigMap (team-b-notion + shared servers). |
+| `catalog-shared.yaml` | M3 shared catalog (duckduckgo, github) — reference/IT-owned. |
+| `mcpgateway.yaml` | M3 MCPGateway CR — IT-owned; contains `policies.rules` for server visibility. |
+| `mcpenvironment.yaml` | M3 MCPEnvironment CR — IT-owned. |
+| `manifests/team-a-policy.yaml` | M3 alice's tool-level policy ConfigMap. Rules read by `evaluate_policy` in the sidecar. |
+| `.github/workflows/deploy-team-a.yml` | M3 alice's GHA pipeline — applies `catalog-team-a.yaml` + `manifests/team-a-policy.yaml`. |
+| `manifests/rbac-pipeline.yaml` | M3 RBAC for `team-a-pipeline` SA. |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
 CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
@@ -78,6 +94,12 @@ were run end-to-end on a fresh ARO cluster.
 | Umbrella Secret (chart-rendered) | `mcp-gateway-gateway-service` (`<release>-gateway-service`) |
 | MCPServer / catalog / env / gateway | `duckduckgo` / `mcp-catalog` / `pov-env` / `pov-gateway` |
 | M2: Entra sidecar (svc) / GitHub MCPServer (svc) / SP-creds Secret | `mcp-entra-sidecar` / `github`→`mcp-github` / `azure-sp-credentials` |
+| M3: Entra App Roles | `MCPGateway.User` (gateway entry) / `mcp-team-a` (alice → Granola) / `mcp-team-b` (bob → Notion) |
+| M3: team servers (prefixed to prevent collisions) | `team-a-granola` (mcp-team-a only) / `team-b-notion` (mcp-team-b only) |
+| M3: OAuth primordials | `team-a-granola-authorize` / `team-b-notion-authorize` (primordial name = `{serverName}-authorize`) |
+| M3: test users | alice `msmikecol@hotmail.com` (mcp-team-a) / bob `mike.coleman@docker.co` (mcp-team-b) |
+| M3: team-a policy ConfigMap | `team-a-policy` (key `policy.yaml`) → mounted at `/etc/mcp-policy/` in sidecar pod |
+| M3: pipeline SA | `team-a-pipeline` |
 
 ## Artifact model (how things are pulled)
 
@@ -136,6 +158,23 @@ a published release.
 7. **CRDs are install-only.** `helm upgrade` never updates them; pull the `mcp-operator` chart and
    `oc apply -f mcp-operator/crds/` when schemas change.
 8. **`oc process` strips `namespace`** from rendered objects — apply the CR with `-n mcp-gateway`.
+9. **ClusterRoleBinding wrong namespace.** The Helm-installed `ClusterRoleBinding/mcp-gateway-mcp-operator`
+   binds the SA in namespace `mcp-gateway-refocpgw1` (the chart's default namespace), not your actual
+   namespace. This makes the operator unable to list/watch MCPGateway, MCPServer, etc. at cluster scope —
+   reconcile loops fail silently after the initial bring-up. MCPGateway changes (new servers, policy rules,
+   discoveryMode) are never pushed to the CP/DP. Fix: `oc patch clusterrolebinding mcp-gateway-mcp-operator
+   --type=json -p '[{"op":"replace","path":"/subjects/0/namespace","value":"mcp-gateway"}]'`.
+10. **`oauth:` plugin requires `MCP_GATEWAY_OAUTH_PORT` on the SIDECAR, not the DP.** Adding an `oauth:`
+    block to `dataPlane.pluginConfig` crashes the DP at startup: `failed to create OAuth plugin from config:
+    register oauth callback session: plugin error (not_configured): MCP_GATEWAY_OAUTH_PORT not set`. This
+    error comes from the **sidecar's** `oauth-start-callback-server` MCP tool (called by the DP during
+    plugin init), not from the DP binary itself. Setting `MCP_GATEWAY_OAUTH_PORT=8082` in DP `extraEnv`
+    does NOT fix it — the env var must be on the **sidecar Deployment**. Fix: add `MCP_GATEWAY_OAUTH_PORT:
+    "8082"` + `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL: "https://mcp-sidecar-oauth.<domain>"` to the sidecar
+    env; add port 8082 to its Service; create a Route for it. The `oauth:` plugin IS required for M3 —
+    without it, catalog entries with `oauth.providers` are deferred as "pre-auth OAuth servers" and the
+    `<server>-authorize` primordial never appears. Note: `static_tools` proto field was removed; static
+    tool declarations in the catalog no longer surface for deferred servers.
 
 ## MCP protocol reality (for testing the gateway over HTTP)
 
@@ -224,6 +263,49 @@ plain (public).
   FastMCP strict-schema validation rejects unknown keys, which makes credential injection fail
   **silently** (upstream then 401s and its tools never appear). This is the AGENTS.md
   "strict-schema delegator" hazard; any custom delegator must tolerate extra kwargs.
+
+## Milestone 3 — Sidecar policy lane (`evaluate_policy`)
+
+**What it is:** the gateway's `SidecarPolicyPlugin` (`pkg/plugins/providers/mcp/policy_plugin.go`)
+calls an `evaluate_policy` MCP tool on the sidecar after the MCPGateway CR's built-in
+`ConfigPolicyPlugin` runs. The two compose as `ComposedPolicyPlugin`: CR rules run first (deny-wins),
+then the sidecar's `evaluate_policy` is called only if the CR allowed it.
+
+**Wire format:** the DP calls `evaluate_policy` with:
+```json
+{"request": {"principal": {"id": "<oid>"}, "action": "invoke",
+             "resource": {"server_name": "team-a-granola", "tool_name": "list_meetings"},
+             "context": {}}}
+```
+The tool returns `{"result": {"allowed": bool, "outcome": "policy_rule", "reason": "...",
+"policy_source": "sidecar-configmap-policy"}}`.
+
+**Implementation:** `sidecar/policy/policy.py` — reads `*.yaml` files from `MCP_GATEWAY_POLICY_DIR`
+(`/etc/mcp-policy/`) on every call (no caching). `sidecar/tests/test_policy.py` — 19 unit tests.
+Registered in `sidecar/server.py` via `_policy.register_tools(mcp)`.
+
+**Config key:** add to `spec.dataPlane.pluginConfig` in GatewayServiceConfig:
+```yaml
+plugins:
+  policy:
+    provider: mcp
+    server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+```
+After patching the CR, **delete the DP pod** (not just rollout restart) to force the operator to
+regenerate `mcp-gw-dp-config` ConfigMap — there can be a reconcile race where rollout restart
+picks up stale config. Confirm `policy:` appears in the DP config before trusting it's active:
+`kubectl exec <dp-pod> -- cat /etc/gateway-service/dp-config.yaml | grep -A3 policy`.
+
+**Policy ConfigMap mount:** `manifests/sidecar-deployment.yaml` mounts the `team-a-policy`
+ConfigMap at `/etc/mcp-policy/` as a directory (NOT using `subPath`). This matters: directory
+mounts live-update via a symlink swap when the kubelet syncs (~60s), while `subPath` mounts are
+snapshotted at pod creation and require a pod restart to reflect ConfigMap changes.
+
+**Governance model:**
+- MCPGateway CR (`mcpgateway.yaml`) — IT-owned; server visibility, role-based allow/deny
+- `team-a-policy` ConfigMap — alice-owned; tool-level deny rules, self-service via GHA pipeline
+- alice's pipeline applies ONLY `catalog-team-a.yaml` and `manifests/team-a-policy.yaml`
+- alice can block tools on her own servers without IT involvement; she cannot grant access beyond what the CR allows
 
 **Connecting clients (M2 — see `docs/sidecar-entra.md` Step 9):** the gateway needs an Entra JWT
 per request; how clients get one differs, and this is where the real friction lives.

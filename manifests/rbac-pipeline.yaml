@@ -1,0 +1,64 @@
+# GitOps pipeline RBAC — ServiceAccounts for GHA deploy pipelines.
+#
+# Model:
+#   team-a-pipeline: MCPServer CRUD + MCPGateway/MCPEnvironment/ConfigMap patch
+#                    (needs gateway write to update team-a policy rules)
+#
+# Naming convention (enforced by Gatekeeper in Phase 2, convention here):
+#   team-a-pipeline MUST only apply resources prefixed "team-a-"
+#
+# Mint a token for GHA (store as OCP_TOKEN_TEAM_A repo secret):
+#   kubectl create token team-a-pipeline -n mcp-gateway --duration=8760h
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: team-a-pipeline
+  namespace: mcp-gateway
+  labels:
+    mcp.docker.com/team: team-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: team-a-pipeline
+  namespace: mcp-gateway
+rules:
+  # MCPServer — full CRUD (team-a owns its in-cluster server pods)
+  - apiGroups: ["mcp.docker.com"]
+    resources: ["mcpservers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # MCPGateway — patch only (update policy rules; no create/delete of gateway)
+  - apiGroups: ["mcp.docker.com"]
+    resources: ["mcpgateways"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # MCPEnvironment — patch only (update catalog refs if needed)
+  - apiGroups: ["mcp.docker.com"]
+    resources: ["mcpenvironments"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # ConfigMap — patch only (update catalog entries)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Deployments — patch needed for `rollout restart` (sets restartedAt annotation)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  # Pods — get/watch only (for rollout status)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: team-a-pipeline
+  namespace: mcp-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: team-a-pipeline
+subjects:
+  - kind: ServiceAccount
+    name: team-a-pipeline
+    namespace: mcp-gateway

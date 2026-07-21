@@ -57,6 +57,33 @@ App roles appear as the `roles` claim in the JWT and can be used for authorizati
 5. Description: `Allows access to the MCP Gateway`
 6. Enable the role, click **Apply**
 
+### 1c-2. Add team-scoped app roles (Milestone 3)
+
+The `MCPGateway.User` role above gates gateway entry. Team roles add **server-level segmentation**:
+users in different Entra groups see different MCP servers, with no sidecar code changes required
+(the JWT `roles` claim is already extracted and passed to the gateway policy engine).
+
+Create two additional app roles — one per team:
+
+**MCP Team A** (Opine access):
+1. Go to **App roles → Create app role**
+2. Display name: `MCP Team A`
+3. Allowed member types: **Users/Groups**
+4. Value: `mcp-team-a`
+5. Description: `Opine AI access via MCP Gateway`
+6. Enable the role, click **Apply**
+
+**MCP Team B** (Granola access):
+1. Go to **App roles → Create app role**
+2. Display name: `MCP Team B`
+3. Allowed member types: **Users/Groups**
+4. Value: `mcp-team-b`
+5. Description: `Granola meeting notes access via MCP Gateway`
+6. Enable the role, click **Apply**
+
+> **The `value` field is what appears in the JWT `roles` claim.** It must exactly match (case-sensitive)
+> the `role:` field in `MCPGateway.spec.policies.rules`. The display name is only shown in the portal.
+
 ### 1d. Set token version to v2.0
 
 The sidecar validates v2.0 tokens. You must set this explicitly.
@@ -118,6 +145,122 @@ Users must have the app role assigned to get it in their JWT `roles` claim.
 3. Select the users or groups who should have gateway access
 4. Assign the **MCP Gateway User** role
 
+### 1g-2. Create Entra security groups and add users (Milestone 3)
+
+Create two security groups — one per team — then add the users to the appropriate groups.
+Finally, assign each group to its app role so the role appears in member JWTs.
+
+**Create the groups:**
+
+1. Go to **Azure Portal → Microsoft Entra ID → Groups → New group**
+2. Group type: **Security**
+3. Group name: `mcp-team-a`
+4. Add member: `msmikecol@hotmail.com` (alice — a B2B guest; must have accepted the invitation)
+5. Click **Create**
+
+Repeat for team-b:
+
+1. **New group**, type: **Security**, name: `mcp-team-b`
+2. Add member: `mike.coleman@docker.co` (bob — a B2B guest; must have accepted the invitation)
+3. Click **Create**
+
+> To add more users to a team later: **Groups → mcp-team-a → Members → Add members**.
+
+**Assign each group to its app role:**
+
+1. Go to **Azure Portal → Enterprise applications → mcp-gateway → Users and groups → Add user/group**
+2. Select group: **mcp-team-a** → Role: **MCP Team A** → **Assign**
+3. Repeat: group **mcp-team-b** → Role: **MCP Team B** → **Assign**
+
+Both groups also need the base **MCP Gateway User** role from §1g so members can authenticate
+to the gateway at all:
+
+4. Add user/group → select **mcp-team-a** → Role: **MCP Gateway User** → **Assign**
+5. Add user/group → select **mcp-team-b** → Role: **MCP Gateway User** → **Assign**
+
+> When a group is assigned to an app role, **all group members** get that role in their JWT
+> automatically. Adding or removing a user from the Entra group is the only change needed to
+> grant or revoke their access — no gateway redeployment required.
+
+### 1h. Register the Entra DCR Proxy application (Milestone 3)
+
+The DCR proxy needs its own Entra app registration so it can exchange RFC 7591 Dynamic Client
+Registration requests for real Entra OAuth flows. This is separate from the main `mcp-gateway`
+registration — it acts as the broker between MCP clients (Claude Code, Claude Desktop) and Entra.
+
+**Create the registration:**
+
+1. Go to **Azure Portal → Microsoft Entra ID → App registrations → New registration**
+2. Name: `mcp-gateway-dcr-proxy`
+3. Supported account types: **Single tenant**
+4. Redirect URI: **Web** → `https://mcp-gw-dp.<CLUSTER_DOMAIN>/dcr/callback`
+5. Click **Register**
+
+Record the **Application (client) ID** for the DCR proxy — this is `PROXY_ENTRA_CLIENT_ID`.
+
+**Create a client secret:**
+
+1. Go to **Certificates & secrets → Client secrets → New client secret**
+2. Description: `dcr-proxy`, expiry: 1 year
+3. Click **Add** and copy the secret value immediately — this is `PROXY_ENTRA_CLIENT_SECRET`
+
+**Grant access to the gateway app scope:**
+
+The DCR proxy needs permission to request tokens for the gateway app's `access` scope:
+
+1. Go to **API permissions → Add a permission → My APIs**
+2. Select the `mcp-gateway` app registration
+3. Choose **Delegated permissions** → check **access**
+4. Click **Add permissions**
+5. Click **Grant admin consent for [tenant]** (required — the proxy acts on behalf of users)
+
+**Pre-authorize the DCR proxy client for the gateway scope:**
+
+1. Open the `mcp-gateway` app registration (the gateway app, not the proxy)
+2. Go to **Expose an API → Add a client application**
+3. Client ID: the DCR proxy's `PROXY_ENTRA_CLIENT_ID` from above
+4. Authorized scopes: check **access**
+5. Click **Add application**
+
+**Create the K8s secret:**
+
+```bash
+GATEWAY_APPID=<mcp-gateway-app-client-id>     # from §1a
+TENANT_ID=<directory-tenant-id>               # from §1a
+DCR_PROXY_CLIENT_ID=<dcr-proxy-client-id>     # from this step
+DCR_PROXY_CLIENT_SECRET=<dcr-proxy-secret>    # from this step
+
+oc create secret generic entra-dcr-proxy-credentials \
+  --from-literal=entra-tenant-id="$TENANT_ID" \
+  --from-literal=dcr-proxy-client-id="$DCR_PROXY_CLIENT_ID" \
+  --from-literal=dcr-proxy-client-secret="$DCR_PROXY_CLIENT_SECRET" \
+  --from-literal=entra-app-client-id="$GATEWAY_APPID" \
+  -n mcp-gateway
+```
+
+---
+
+**Verify the roles are in the token** before deploying. With the Azure CLI client pre-authorized (§1e):
+
+```bash
+APPID=<your-application-client-id>
+
+# Log in as alice and decode the roles claim
+az login --allow-no-subscriptions --username msmikecol@hotmail.com
+az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
+  | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
+# alice expects: ["MCPGateway.User", "mcp-team-a"]
+
+# Log in as bob and decode the roles claim
+az login --allow-no-subscriptions --username mike.coleman@docker.co
+az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
+  | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
+# bob expects: ["MCPGateway.User", "mcp-team-b"]
+```
+
+> If `roles` is missing or empty, the user is not yet a member of a group that is assigned to
+> the app role. Group-to-role assignments can take a minute to propagate.
+
 ---
 
 ## 2. Create an Azure Key Vault
@@ -134,13 +277,33 @@ Users must have the app role assigned to get it in their JWT `roles` claim.
 ### 2a. Grant the sidecar access to Key Vault
 
 1. Open the Key Vault → **Access control (IAM) → Add role assignment**
-2. Role: **Key Vault Secrets User**
+2. Role: **Key Vault Secrets Officer** *(Milestone 3 requires Officer — see note below)*
 3. Assign access to: **User, group, or service principal**
 4. Members: search for your app registration name (`mcp-gateway`) and select it
 5. Click **Review + assign**
 
-> This grants the sidecar's service principal read access to secrets. It does **not**
-> grant write access — PAT secrets are loaded manually (or by your ops tooling).
+> **Milestone 2 only (PAT delegation):** `Key Vault Secrets User` (read-only) is sufficient —
+> PAT secrets are loaded manually and the sidecar only reads them.
+>
+> **Milestone 3 (OAuth PKCE):** the sidecar must *write* OAuth tokens to Key Vault after each
+> user completes the consent flow. This requires `Key Vault Secrets Officer` (read + write +
+> delete). If you assigned `Secrets User` for M2, upgrade it now:
+>
+> ```bash
+> # Remove the old read-only assignment first
+> az role assignment delete \
+>   --assignee <SP_APP_ID> \
+>   --role "Key Vault Secrets User" \
+>   --scope <KV_RESOURCE_ID>
+>
+> # Add the write-capable assignment
+> az role assignment create \
+>   --assignee <SP_APP_ID> \
+>   --role "Key Vault Secrets Officer" \
+>   --scope <KV_RESOURCE_ID>
+> ```
+>
+> Role assignments take 1–2 minutes to propagate.
 
 ---
 
@@ -231,6 +394,49 @@ az ad app update --id "$APPID" --identifier-uris "api://$APPID"
 ROLE_ID=$(cat /proc/sys/kernel/random/uuid)
 az ad app update --id "$APPID" --app-roles "[{\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Gateway User\",\"description\":\"Allows access to the MCP Gateway\",\"value\":\"MCPGateway.User\",\"id\":\"$ROLE_ID\",\"isEnabled\":true}]"
 
+# ---- 1c-2: team-scoped app roles (Milestone 3) ----
+TEAM_A_ROLE_ID=$(cat /proc/sys/kernel/random/uuid)
+TEAM_B_ROLE_ID=$(cat /proc/sys/kernel/random/uuid)
+# Fetch existing app-roles array, append the two new ones
+EXISTING_ROLES=$(az ad app show --id "$APPID" --query appRoles -o json)
+az ad app update --id "$APPID" --app-roles "$(echo "$EXISTING_ROLES" | python3 -c "
+import json,sys
+roles = json.load(sys.stdin)
+roles += [
+  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team A\",\"description\":\"Opine AI access via MCP Gateway\",\"value\":\"mcp-team-a\",\"id\":\"$TEAM_A_ROLE_ID\",\"isEnabled\":True},
+  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team B\",\"description\":\"Granola meeting notes access via MCP Gateway\",\"value\":\"mcp-team-b\",\"id\":\"$TEAM_B_ROLE_ID\",\"isEnabled\":True}
+]
+print(json.dumps(roles))
+")"
+
+# ---- 1g-2: create security groups, add users, assign groups to app roles ----
+ALICE_OID=$(az ad user show --id "msmikecol@hotmail.com" --query id -o tsv)
+BOB_OID=$(az ad user show --id "mike.coleman@docker.co" --query id -o tsv)
+
+# Create security groups
+TEAM_A_GROUP=$(az ad group create --display-name "mcp-team-a" --mail-nickname "mcp-team-a" --query id -o tsv)
+TEAM_B_GROUP=$(az ad group create --display-name "mcp-team-b" --mail-nickname "mcp-team-b" --query id -o tsv)
+
+# Add users to their groups
+az ad group member add --group "$TEAM_A_GROUP" --member-id "$ALICE_OID"
+az ad group member add --group "$TEAM_B_GROUP" --member-id "$BOB_OID"
+
+# Assign each group to its team app role
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/groups/$TEAM_A_GROUP/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$TEAM_A_GROUP\",\"resourceId\":\"$SP_OID\",\"appRoleId\":\"$TEAM_A_ROLE_ID\"}"
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/groups/$TEAM_B_GROUP/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$TEAM_B_GROUP\",\"resourceId\":\"$SP_OID\",\"appRoleId\":\"$TEAM_B_ROLE_ID\"}"
+
+# Assign both groups to the base MCPGateway.User role (so members can authenticate at all)
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/groups/$TEAM_A_GROUP/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$TEAM_A_GROUP\",\"resourceId\":\"$SP_OID\",\"appRoleId\":\"$ROLE_ID\"}"
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/groups/$TEAM_B_GROUP/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$TEAM_B_GROUP\",\"resourceId\":\"$SP_OID\",\"appRoleId\":\"$ROLE_ID\"}"
+
 # ---- 1b: delegated scope 'access' + 1d: v2 tokens ----
 SCOPE_ID=$(cat /proc/sys/kernel/random/uuid)
 az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$OBJID" \
@@ -265,7 +471,8 @@ az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGr
 # ---- 2: Key Vault (RBAC) + role grants ----
 az keyvault create -n "$KV" -g "$RG" -l "$LOC" --enable-rbac-authorization true
 KV_ID=$(az keyvault show -n "$KV" --query id -o tsv)
-az role assignment create --assignee "$SP_OID" --role "Key Vault Secrets User"   --scope "$KV_ID"
+# SP needs Officer (not just User) so it can write OAuth tokens during M3 PKCE flows
+az role assignment create --assignee "$SP_OID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
 az role assignment create --assignee "$MY_OID" --role "Key Vault Secrets Officer" --scope "$KV_ID"
 
 # ---- 3: store a user's GitHub PAT (must be a VALID token with the scopes the tools need) ----
@@ -283,3 +490,58 @@ echo "AZURE_CLIENT_SECRET = $SECRET   # shown once"
 > reads succeed. The `github-pat-<oid>` secret value must be a **valid** GitHub token with the
 > scopes the GitHub MCP tools need — an expired/placeholder token yields `401 Bad credentials`
 > from GitHub even though injection is working.
+
+### 1h-cli: DCR Proxy app registration
+
+```bash
+# ---- inputs ----
+# APPID must already be set (from the 1a block above, or: APPID=$(az ad app show --display-name mcp-gateway --query appId -o tsv))
+# SCOPE_ID must already be set (the 'access' scope ID from the 1b block above)
+CLUSTER_DOMAIN=<your-cluster-ingress-domain>   # e.g. apps.v9hpuzb1.eastus.aroapp.io
+
+# ---- 1h: register the DCR proxy app ----
+DCR_PROXY_APPID=$(az ad app create \
+  --display-name "mcp-gateway-dcr-proxy" \
+  --sign-in-audience AzureADMyOrg \
+  --web-redirect-uris "https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr/callback" \
+  --query appId -o tsv)
+DCR_PROXY_OBJID=$(az ad app show --id "$DCR_PROXY_APPID" --query id -o tsv)
+
+# Client secret
+DCR_PROXY_SECRET=$(az ad app credential reset \
+  --id "$DCR_PROXY_APPID" \
+  --display-name dcr-proxy \
+  --years 1 \
+  --query password -o tsv)
+
+# Create service principal for the proxy app
+DCR_PROXY_SP=$(az ad sp create --id "$DCR_PROXY_APPID" --query id -o tsv)
+
+# Grant the proxy permission to request tokens for the gateway app's 'access' scope
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$DCR_PROXY_OBJID" \
+  --headers "Content-Type=application/json" \
+  --body "{\"requiredResourceAccess\":[{\"resourceAppId\":\"$APPID\",\"resourceAccess\":[{\"id\":\"$SCOPE_ID\",\"type\":\"Scope\"}]}]}"
+
+# Admin consent for the proxy → gateway permission (required for it to broker on behalf of users)
+az rest --method POST --uri "https://graph.microsoft.com/v1.0/oauth2PermissionGrants" \
+  --headers "Content-Type=application/json" \
+  --body "{\"clientId\":\"$DCR_PROXY_SP\",\"consentType\":\"AllPrincipals\",\"resourceId\":\"$SP_OID\",\"scope\":\"access\"}"
+
+# Pre-authorize the DCR proxy client on the gateway app's 'access' scope
+# (so users aren't prompted for consent when the proxy requests tokens on their behalf)
+GATEWAY_OBJID=$(az ad app show --id "$APPID" --query id -o tsv)
+az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$GATEWAY_OBJID" \
+  --headers "Content-Type=application/json" \
+  --body "{\"api\":{\"preAuthorizedApplications\":[{\"appId\":\"$DCR_PROXY_APPID\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]}]}}"
+
+# Create the K8s secret
+oc create secret generic entra-dcr-proxy-credentials \
+  --from-literal=entra-tenant-id="$TENANT" \
+  --from-literal=dcr-proxy-client-id="$DCR_PROXY_APPID" \
+  --from-literal=dcr-proxy-client-secret="$DCR_PROXY_SECRET" \
+  --from-literal=entra-app-client-id="$APPID" \
+  -n mcp-gateway
+
+echo "DCR_PROXY_APPID = $DCR_PROXY_APPID"
+echo "DCR_PROXY_SECRET = $DCR_PROXY_SECRET   # shown once"
+```

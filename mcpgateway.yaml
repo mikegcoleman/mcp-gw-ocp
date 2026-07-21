@@ -1,0 +1,99 @@
+# MCPGateway — managed by central IT; teams push policy rule changes via GHA pipeline.
+#
+# Server visibility (flip-to-deny: allow rules required for every visible server):
+#   duckduckgo      — everyone
+#   github          — everyone (per-user PAT injected from Key Vault)
+#   team-a-granola  — mcp-team-a only (alice)
+#   team-b-notion   — mcp-team-b only (bob)
+#
+# Apply: kubectl apply -n mcp-gateway -f mcpgateway.yaml
+# Policy changes take effect immediately — no CP restart needed.
+---
+apiVersion: mcp.docker.com/v1alpha1
+kind: MCPGateway
+metadata:
+  name: pov-gateway
+  namespace: mcp-gateway
+spec:
+  environmentRef: pov-env
+  displayName: "PoV Gateway"
+  discoveryMode: open
+  serverNames:
+    - duckduckgo
+    - github
+    - team-a-granola
+    - team-b-notion
+  policies:
+    rules:
+      # --- servers (all authenticated users) ---
+      - serverName: duckduckgo
+        effect: allow
+        reason: "DuckDuckGo available to all authenticated users"
+      - serverName: github
+        effect: allow
+        reason: "GitHub available to all authenticated users"
+
+      # --- team-a (alice) ---
+      - serverName: team-a-granola
+        role: mcp-team-a
+        effect: allow
+        reason: "team-a-granola visible only to mcp-team-a members"
+
+      # --- team-b (bob) ---
+      - serverName: team-b-notion
+        role: mcp-team-b
+        effect: allow
+        reason: "team-b-notion visible only to mcp-team-b members"
+
+      # --- OAuth primordials (role-scoped) ---
+      - action: invokePrimordial
+        toolName: team-a-granola-authorize
+        role: mcp-team-a
+        effect: allow
+        reason: "Granola OAuth flow — mcp-team-a members only"
+      - action: invokePrimordial
+        toolName: team-a-granola-revoke-auth
+        role: mcp-team-a
+        effect: allow
+        reason: "Granola token revocation — mcp-team-a members only"
+      - action: invokePrimordial
+        toolName: team-b-notion-authorize
+        role: mcp-team-b
+        effect: allow
+        reason: "Notion OAuth flow — mcp-team-b members only"
+      - action: invokePrimordial
+        toolName: team-b-notion-revoke-auth
+        role: mcp-team-b
+        effect: allow
+        reason: "Notion token revocation — mcp-team-b members only"
+
+      # --- all other primordials (all authenticated users) ---
+      - action: invokePrimordial
+        toolName: mcp-find
+        effect: allow
+      - action: invokePrimordial
+        toolName: mcp-add
+        effect: allow
+      - action: invokePrimordial
+        toolName: mcp-remove
+        effect: allow
+      - action: invokePrimordial
+        toolName: mcp-config-set
+        effect: allow
+      - action: invokePrimordial
+        toolName: mcp-exec
+        effect: allow
+      - action: invokePrimordial
+        toolName: code-mode
+        effect: allow
+
+      # --- DEMO: tool-level block (uncomment to block list_meetings for everyone) ---
+      # Deny-wins: overrides the mcp-team-a allow above.
+      # Push this change → pipeline applies it → alice's list_meetings call fails.
+      # Revert (re-comment) and push to restore.
+      #
+      # - serverName: team-a-granola
+      #   toolName: list_meetings
+      #   action: invoke
+      #   effect: deny
+      #   reason: "list_meetings temporarily restricted by central IT"

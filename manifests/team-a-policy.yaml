@@ -1,0 +1,38 @@
+# Team A policy rules — managed by alice (msmikecol@hotmail.com).
+# Applied by the GHA pipeline; the sidecar's evaluate_policy tool reads
+# this ConfigMap from /etc/mcp-policy/ and evaluates it on every tool call.
+#
+# The sidecar's policy runs AFTER the MCPGateway CR allows the request —
+# so this can only add denies, not bypass the CR's server-visibility rules.
+#
+# Rule fields:
+#   serverName  required  backend server name (must start with team-a-)
+#   toolName    optional  omit to match all tools on this server
+#   effect      required  only "deny" is meaningful here
+#   reason      optional  surfaced to the caller in the error response
+#
+# Demo: uncomment the rule below, push → pipeline applies it → alice's
+# next list_meetings call is denied. Re-comment and push to restore.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: team-a-policy
+  namespace: mcp-gateway
+  labels:
+    mcp.docker.com/team: team-a
+    mcp.docker.com/managed-by: team-a-pipeline
+data:
+  policy.yaml: |
+    version: "1"
+    rules: []
+    # --- DEMO: uncomment to block meeting tools ---
+    # rules:
+    #   - serverName: team-a-granola
+    #     toolName: list_meetings
+    #     effect: deny
+    #     reason: "list_meetings temporarily restricted by team-a policy"
+    #   - serverName: team-a-granola
+    #     toolName: query_granola_meetings
+    #     effect: deny
+    #     reason: "query_granola_meetings temporarily restricted by team-a policy"

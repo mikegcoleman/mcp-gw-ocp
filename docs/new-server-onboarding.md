@@ -102,5 +102,5 @@ flowchart TD
 - **Catalog changes need a CP restart.** The control plane reads the catalog at startup — the GHA pipeline handles this automatically.
 - **Policy changes do not need a restart.** The sidecar re-reads `/etc/mcp-policy/` on every call; the kubelet syncs the ConfigMap volume within ~60s.
 - **Teams can only deny, not grant.** The sidecar policy layer runs after the MCPGateway CR allows the request.
-- **MCPServer names should be prefixed** with the team name (e.g. `team-a-granola`) to avoid collisions. The GHA workflow enforces this by convention (it only applies `mcpserver-team-X-*.yaml` files); Kubernetes RBAC alone cannot enforce name prefixes.
+- **MCPServer names should be prefixed** with the team name (e.g. `team-a-granola`) to avoid collisions — the GHA workflow enforces this by only applying `mcpserver-team-X-*.yaml` files.
 - **Order is flexible.** IT can complete their steps independently of the team; the MCPGateway CR does not validate that a referenced MCPServer exists.

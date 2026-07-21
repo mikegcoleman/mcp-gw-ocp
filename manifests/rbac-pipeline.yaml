@@ -40,10 +40,10 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Deployments — get/watch only (for rollout status checks)
+  # Deployments — patch needed for `rollout restart` (sets restartedAt annotation)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch", "update"]
   # Pods — get/watch only (for rollout status)
   - apiGroups: [""]
     resources: ["pods"]

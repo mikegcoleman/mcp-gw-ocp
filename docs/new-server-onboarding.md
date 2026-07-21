@@ -4,14 +4,21 @@
 
 Each file touched during onboarding, who owns it, and why.
 
-| File | Owner | Purpose |
-|------|-------|---------|
-| `mcpgateway.yaml` | IT | Server visibility rules — flip-to-deny policy engine that controls which teams see which servers and which OAuth primordials they can invoke |
-| `mcpenvironment.yaml` | IT | Binds one or more catalog ConfigMaps into the gateway runtime; the gateway CP reads this at startup to know which catalogs to load |
-| `catalog-team-X.yaml` | Team | Server connection details for this team's servers: URL, transport type, auth config, OAuth provider, allowed hosts |
-| `manifests/rbac-pipeline.yaml` | IT | Creates the `team-X-pipeline` ServiceAccount with scoped RBAC (MCPServer CRUD + ConfigMap patch); the GHA pipeline authenticates as this SA |
-| `manifests/mcpserver-team-X-NAME.yaml` | Team | MCPServer CR for in-cluster servers only; the operator watches these and creates a pod + Service for each one |
-| `manifests/team-X-policy.yaml` | Team | Tool-level deny rules read by the sidecar's `evaluate_policy` tool; runs after the MCPGateway CR allows the request — teams can restrict tools but cannot grant access |
+**IT-owned**
+
+| File | Purpose |
+|------|---------|
+| `mcpgateway.yaml` | Server visibility rules — flip-to-deny policy engine that controls which teams see which servers and which OAuth primordials they can invoke |
+| `mcpenvironment.yaml` | Binds one or more catalog ConfigMaps into the gateway runtime; the gateway CP reads this at startup to know which catalogs to load |
+| `manifests/rbac-pipeline.yaml` | Creates the `team-X-pipeline` ServiceAccount with scoped RBAC (MCPServer CRUD + ConfigMap patch); the GHA pipeline authenticates as this SA |
+
+**Team-owned**
+
+| File | Purpose |
+|------|---------|
+| `catalog-team-X.yaml` | Server connection details for this team's servers: URL, transport type, auth config, OAuth provider, allowed hosts |
+| `manifests/mcpserver-team-X-NAME.yaml` | MCPServer CR for in-cluster servers only; the operator watches these and creates a pod + Service for each one |
+| `manifests/team-X-policy.yaml` | Tool-level deny rules read by the sidecar's `evaluate_policy` tool; runs after the MCPGateway CR allows the request — teams can restrict tools but cannot grant access |
 
 ---
 

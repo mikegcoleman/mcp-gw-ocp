@@ -1,0 +1,36 @@
+# Shared MCP server catalog — managed by central IT.
+# Contains servers available to all authenticated users.
+# Apply: kubectl apply -n mcp-gateway -f catalog-shared.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-shared
+  namespace: mcp-gateway
+data:
+  catalog.yaml: |
+    name: shared-catalog
+    displayName: Shared MCP Servers (Central IT)
+    registry:
+      duckduckgo:
+        name: duckduckgo
+        title: DuckDuckGo Search
+        description: Public web search — no upstream authentication
+        type: remote
+        remote:
+          url: http://mcp-duckduckgo:8080/mcp
+          transport_type: streamable-http
+        allowHosts:
+          - api.duckduckgo.com:443
+
+      github:
+        name: github
+        title: GitHub
+        description: GitHub repository access — issues, PRs, code search
+        type: remote
+        auth_delegation: gateway
+        remote:
+          url: http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp
+          transport_type: streamable-http
+        allowHosts:
+          - api.github.com:443

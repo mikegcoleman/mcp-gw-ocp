@@ -12,7 +12,8 @@ on:
   push:
     branches: [main, feature/group-based-access]
     paths:
-      - 'catalog-and-gateway.yaml'
+      - 'catalog-team-a.yaml'
+      - 'mcpgateway.yaml'
       - 'manifests/mcpserver-team-a-*.yaml'
   workflow_dispatch:
 
@@ -46,8 +47,10 @@ jobs:
               token: ${{ secrets.OCP_TOKEN_TEAM_A }}
           EOF
 
-      - name: Apply catalog + MCPGateway
-        run: kubectl apply -n mcp-gateway -f catalog-and-gateway.yaml
+      - name: Apply team-a catalog + gateway policy
+        run: |
+          kubectl apply -n mcp-gateway -f catalog-team-a.yaml
+          kubectl apply -n mcp-gateway -f mcpgateway.yaml
 
       - name: Apply team-a MCPServer CRs (if any)
         run: |

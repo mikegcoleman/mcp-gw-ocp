@@ -24,24 +24,6 @@ data:
         oauth:
           providers:
             - provider: granola
-        tools:
-          - name: list_meetings
-            description: List recent meeting notes from Granola for the authenticated user.
-            inputSchema:
-              type: object
-              properties:
-                limit:
-                  type: integer
-                  description: Maximum number of meetings to return (default 10).
-          - name: get_meeting
-            description: Retrieve a single meeting's full notes by meeting id.
-            inputSchema:
-              type: object
-              required: [id]
-              properties:
-                id:
-                  type: string
-                  description: Granola meeting id.
         allowHosts:
           - mcp.granola.ai:443
           - api.granola.ai:443

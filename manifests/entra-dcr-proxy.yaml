@@ -77,6 +77,8 @@ objects:
                     secretKeyRef:
                       name: entra-dcr-proxy-credentials
                       key: entra-app-client-id
+                # Static per-gateway — one proxy instance per gateway. See group-based-access.md §5e
+                # for the multi-gateway limitation and the recommended long-term fix.
                 - name: PROXY_BASE_URL
                   value: "https://mcp-gw-dp.${CLUSTER_DOMAIN}/dcr"
               livenessProbe:

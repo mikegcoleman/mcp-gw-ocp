@@ -254,6 +254,13 @@ On first connection the client opens a browser window to sign in with the user's
 Each user's tool list will differ based on their role assignment — `mcp-team-a` members see
 Granola, `mcp-team-b` members see Notion, everyone sees DuckDuckGo and GitHub.
 
+> **Multi-gateway limitation.** `PROXY_BASE_URL` is a static env var — it hardcodes the proxy
+> to one gateway's hostname. If you deploy multiple gateways on the same cluster, each needs its
+> own proxy instance and its own Route. The clean long-term fix is for the proxy to handle
+> `/.well-known/oauth-protected-resource/*` as a wildcard, extract the gateway suffix from the
+> path dynamically, and return it as the `resource` value in the PRM response — then one proxy
+> instance serves all gateways. That change lives in the proxy source, not in the manifests here.
+
 ---
 
 ## 6. OAuth first-use flow

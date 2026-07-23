@@ -66,6 +66,28 @@ On the first tool call, the upstream returns 401 and the gateway's OAuth broker 
 to start a PKCE flow. After the user completes consent, the token is stored in Key Vault and
 injected automatically on subsequent calls. See [Step 6](#6-oauth-first-use-flow) below.
 
+**OAuth primordials must also be explicitly allowed.** When the OAuth broker needs to start a
+PKCE flow, it calls a special `{serverName}-authorize` tool (called a "primordial") on behalf of
+the user. Because flip-to-deny applies to primordials too, `mcpgateway.yaml` includes explicit
+`invokePrimordial` allow rules for each OAuth server's `authorize` and `revoke-auth` primordials,
+scoped to the correct role:
+
+```yaml
+- action: invokePrimordial
+  toolName: team-a-granola-authorize
+  role: mcp-team-a
+  effect: allow
+```
+
+The primordial name is always `{serverName}-authorize` / `{serverName}-revoke-auth`, where
+`serverName` is the backend name in the catalog entry (e.g. `team-a-granola`, not the tool
+prefix `team-a-granola__`). **If you add a new OAuth server, you must add corresponding
+`invokePrimordial` allow rules** — without them the OAuth flow silently fails to trigger.
+
+**Two additional DP plugins are required for M3** (added in Step 3a below):
+- `oauth:` — activates the gateway's OAuth broker; without it catalog entries with `oauth.providers` are deferred as "pre-auth OAuth servers" and the `{serverName}-authorize` primordial never appears in the tool list.
+- `policy:` — wires in the sidecar's `evaluate_policy` tool for Layer 2 policy (Step 8).
+
 ---
 
 ## 2. Azure setup
@@ -100,7 +122,69 @@ can take a minute to propagate — re-acquire the token after a short wait.
 
 ---
 
-## 3. Apply the catalog and policy
+## 3. Update the GatewayServiceConfig and apply the catalog
+
+### 3a. Add the `oauth:` and `policy:` plugins to the GatewayServiceConfig
+
+M3 requires two additional plugins in the DP's `pluginConfig`. Edit `gatewayserviceconfig.yaml`
+and replace the M2 `pluginConfig` block with the following (keep everything else in the file
+unchanged):
+
+```yaml
+        pluginConfig: |
+          plugins:
+            gateway_auth:
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+            oauth:
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+            policy:
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+          auth_delegators:
+            - name: entra-sidecar
+              strategy: remote
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+          auth_delegation:
+            defaults:
+              remote: entra-sidecar
+```
+
+> **`MCP_GATEWAY_OAUTH_PORT` must be set on the sidecar — not the DP.** When the DP starts, it
+> calls the sidecar's `oauth-start-callback-server` tool to initialize the `oauth:` plugin. If
+> `MCP_GATEWAY_OAUTH_PORT` is absent from the sidecar env the DP crashes at startup with
+> `MCP_GATEWAY_OAUTH_PORT not set`. This env var is already set to `8082` in
+> `manifests/sidecar-deployment.yaml` (applied in Milestone 2) — do not set it on the DP.
+
+Re-apply the GatewayServiceConfig and then **delete the DP pod** to force the operator to
+regenerate the DP config. A plain `rollout restart` can pick up stale config due to a reconcile
+race with the operator:
+
+```bash
+CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+VERSION=$(oc get gwsvc mcp-gw -n mcp-gateway -o jsonpath='{.spec.version}')
+
+oc process -f gatewayserviceconfig.yaml \
+  -p VERSION="$VERSION" \
+  -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
+  | oc apply -n mcp-gateway -f -
+
+# Delete the pod — the operator recreates it with the updated config.
+kubectl delete pod -l app.kubernetes.io/component=data-plane -n mcp-gateway
+kubectl rollout status deploy/mcp-gw-dp -n mcp-gateway
+```
+
+Confirm both plugins are active before moving on:
+
+```bash
+kubectl exec deploy/mcp-gw-dp -n mcp-gateway -- \
+  cat /etc/gateway-service/dp-config.yaml | grep -E "oauth:|policy:"
+# Expect two lines — one for each plugin.
+```
+
+### 3b. Apply the catalog and MCPGateway CR
 
 M3 replaces the single `catalog-and-gateway.yaml` from Milestone 1 with split files. Apply
 all of them and restart the control plane to pick up the new catalog entries:

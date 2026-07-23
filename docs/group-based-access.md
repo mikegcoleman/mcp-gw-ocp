@@ -102,15 +102,19 @@ can take a minute to propagate — re-acquire the token after a short wait.
 
 ## 3. Apply the catalog and policy
 
-`catalog-and-gateway.yaml` now contains all four servers (duckduckgo, github, granola, notion)
-and the `policies.rules` block. Apply it and restart the control plane to pick up the new
-catalog entries:
+M3 replaces the single `catalog-and-gateway.yaml` from Milestone 1 with split files. Apply
+all of them and restart the control plane to pick up the new catalog entries:
 
 ```bash
-oc apply -f catalog-and-gateway.yaml
+oc apply -n mcp-gateway \
+  -f catalog-shared.yaml \
+  -f catalog-team-a.yaml \
+  -f catalog-team-b.yaml \
+  -f mcpenvironment.yaml \
+  -f mcpgateway.yaml
 
-# CP restart is required because the catalog ConfigMap changed (new server entries).
-# Policy-only changes to the MCPGateway CR would NOT require this.
+# CP restart is required because the catalog ConfigMaps changed (new server entries).
+# Policy-only changes to mcpgateway.yaml would NOT require this.
 oc rollout restart deploy/mcp-gw-cp -n mcp-gateway
 oc rollout status deploy/mcp-gw-cp -n mcp-gateway --timeout=120s
 
@@ -428,8 +432,7 @@ The team-a owner can self-serve this without touching `mcpgateway.yaml` or invol
 
 ## 9. Modifying the policy
 
-To add more servers or roles, extend `policies.rules` in `catalog-and-gateway.yaml` and
-re-apply. The gateway's DP picks up policy changes immediately — no restart needed for
+To add more servers or roles, extend `policies.rules` in `mcpgateway.yaml` and re-apply. The gateway's DP picks up policy changes immediately — no restart needed for
 policy-only changes (only catalog ConfigMap changes require a CP restart).
 
 **To clear all rules** and revert to allow-all, use an explicit empty list:

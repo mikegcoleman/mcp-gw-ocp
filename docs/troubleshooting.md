@@ -36,8 +36,8 @@ order, start with the Milestone 1 section and work forward.
 | GitHub call 401 / `get_connection_headers` empty | No `github-pat-<oid>` secret in Key Vault for that user | `az keyvault secret set --vault-name <kv> --name github-pat-<oid> --value <pat>` |
 | GitHub call `401 Bad credentials` (injection worked, GitHub rejected) | The `github-pat-<oid>` secret is expired/invalid or lacks scope | Store a valid PAT with the needed scopes in Key Vault |
 | Client OAuth: `AADSTS65001` (no consent) | The client's app-id isn't pre-authorized for the `access` scope | Pre-authorize the client id (azure-setup §1e); for CLI, the Azure CLI client |
-| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | DCR proxy not reachable or `DCR_PROXY_URL` not set in `sidecar-config` | Verify `DCR_PROXY_URL=https://mcp-gw-dp.<domain>/dcr` in the sidecar env; confirm the proxy Route is up |
-| Client OAuth: `AADSTS9010010` (resource ≠ scope) | DCR proxy not routing correctly — Claude Code is hitting Entra directly | Same as above — check `DCR_PROXY_URL` and the proxy deployment |
+| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | DCR proxy not reachable or PRM discovery broken | Verify `curl -s https://mcp-gw-dp.<domain>/.well-known/oauth-protected-resource` returns the proxy's `/dcr` URL; confirm the DCR proxy pod is Running and both Routes are up (Step 8b) |
+| Client OAuth: `AADSTS9010010` (resource ≠ scope) | DCR proxy not routing correctly — Claude Code is hitting Entra directly | Check the PRM Route is pointing to the DCR proxy pod (`oc get route entra-dcr-proxy-prm -n mcp-gateway`) and the proxy is Running |
 | Key Vault access denied | SP lacks `Key Vault Secrets User`, or KV is in access-policy (not RBAC) mode | Grant the role on the vault; switch KV to RBAC |
 
 **Bypassing the DCR proxy for diagnostics** — if you're seeing auth errors and aren't sure
@@ -78,6 +78,6 @@ app registration.
 | Tool blocked unexpectedly (Layer 2) | A deny rule in `team-a-policy` ConfigMap | `kubectl get cm team-a-policy -n mcp-gateway -o jsonpath='{.data.policy\.yaml}'` to inspect rules |
 | Policy ConfigMap change not taking effect | Kubelet volume sync delay (~60s) or pod restart needed | Wait ~60s after `kubectl apply`; verify with `kubectl exec <sidecar-pod> -- cat /etc/mcp-policy/policy.yaml` |
 | `evaluate_policy` not called (no sidecar logs) | `plugins.policy` key missing from GatewayServiceConfig | Patch pluginConfig: `plugins.policy.provider: mcp` + `plugins.policy.server: http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp`; delete DP pod to force config reload |
-| Claude Code OAuth browser never opens | DCR proxy not deployed or `DCR_PROXY_URL` not set on sidecar | Deploy `manifests/entra-dcr-proxy.yaml` and run `oc set env` from Step 5d |
-| DCR proxy pod crash-looping | `entra-dcr-proxy-credentials` secret missing or has wrong keys | Verify with `oc describe secret entra-dcr-proxy-credentials -n mcp-gateway` |
-| `/dcr/health` returns 503 from Route | Proxy pod not ready | `oc get pod -l app=entra-dcr-proxy -n mcp-gateway` and check logs |
+| Claude Code OAuth browser never opens | DCR proxy not deployed | Verify the proxy is Running (Milestone 2 [Step 8b](sidecar-entra.md#step-8b--deploy-the-entra-dcr-proxy-enables-mcp-client-oauth)); check `/dcr/health` and PRM discovery |
+| DCR proxy pod crash-looping | `mcp-gateway-secrets` Secret missing or has wrong keys | Verify with `oc describe secret mcp-gateway-secrets -n mcp-gateway`; see [azure-setup.md §1h](azure-setup.md#1h-create-the-dcr-proxy-credentials-secret-milestone-2) |
+| `/dcr/health` returns 503 from Route | Proxy pod not ready | `oc get pod -l app.kubernetes.io/name=mcp-gateway-entra-dcr-proxy -n mcp-gateway` (Helm) or `-l app=entra-dcr-proxy` (raw manifest), then check logs |

@@ -182,7 +182,7 @@ to the gateway at all:
 > automatically. Adding or removing a user from the Entra group is the only change needed to
 > grant or revoke their access — no gateway redeployment required.
 
-### 1h. Register the Entra DCR Proxy application (Milestone 3)
+### 1h. Register the Entra DCR Proxy application (Milestone 2)
 
 The DCR proxy needs its own Entra app registration so it can exchange RFC 7591 Dynamic Client
 Registration requests for real Entra OAuth flows. This is separate from the main `mcp-gateway`
@@ -230,7 +230,7 @@ TENANT_ID=<directory-tenant-id>               # from §1a
 DCR_PROXY_CLIENT_ID=<dcr-proxy-client-id>     # from this step
 DCR_PROXY_CLIENT_SECRET=<dcr-proxy-secret>    # from this step
 
-oc create secret generic entra-dcr-proxy-credentials \
+oc create secret generic mcp-gateway-secrets \
   --from-literal=entra-tenant-id="$TENANT_ID" \
   --from-literal=dcr-proxy-client-id="$DCR_PROXY_CLIENT_ID" \
   --from-literal=dcr-proxy-client-secret="$DCR_PROXY_CLIENT_SECRET" \
@@ -535,7 +535,7 @@ az rest --method PATCH --uri "https://graph.microsoft.com/v1.0/applications/$GAT
   --body "{\"api\":{\"preAuthorizedApplications\":[{\"appId\":\"$DCR_PROXY_APPID\",\"delegatedPermissionIds\":[\"$SCOPE_ID\"]}]}}"
 
 # Create the K8s secret
-oc create secret generic entra-dcr-proxy-credentials \
+oc create secret generic mcp-gateway-secrets \
   --from-literal=entra-tenant-id="$TENANT" \
   --from-literal=dcr-proxy-client-id="$DCR_PROXY_APPID" \
   --from-literal=dcr-proxy-client-secret="$DCR_PROXY_SECRET" \

@@ -4,17 +4,32 @@
 # Entra without pre-registering each client manually.
 #
 # Prerequisites:
+#   - mcp-gateway-secrets exists with keys:
+#       entra-tenant-id, dcr-proxy-client-id, dcr-proxy-client-secret, entra-app-client-id
+#     (see docs/azure-setup.md §1h for where each value comes from)
 #   - Milestone 2 sidecar is running
-#   - K8s secret `entra-dcr-proxy-credentials` exists (azure-setup.md §1h)
-#   - ghcr-pull-secret exists in the namespace (from Milestone 1)
 #
-# Apply with:
+# RECOMMENDED — Helm install (handles Deployment, Service, Route, and prmOverride in one command):
+#
+#   helm install entra-dcr-proxy \
+#     oci://ghcr.io/docker-pro-serv/charts/mcp-gateway-entra-dcr-proxy \
+#     --version 0.1.4 \
+#     --namespace mcp-gateway \
+#     --set proxyBaseUrl=https://<GATEWAY_HOSTNAME>/dcr \
+#     --set route.enabled=true \
+#     --set route.host=<GATEWAY_HOSTNAME> \
+#     --set prmOverride.enabled=true
+#
+# Raw manifest alternative (this file) — use if Helm is unavailable:
+#
 #   export CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
 #   oc process -f manifests/entra-dcr-proxy.yaml -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
 #     | oc apply -n mcp-gateway -f -
 #
 # After applying, the proxy is reachable at:
 #   https://mcp-gw-dp.<CLUSTER_DOMAIN>/dcr
+# and serves Protected Resource Metadata at:
+#   https://mcp-gw-dp.<CLUSTER_DOMAIN>/.well-known/oauth-protected-resource
 #
 # NOTE: runs one replica — client registrations are in-memory. Clients re-register
 # automatically on pod restart (fully transparent to the user).
@@ -28,13 +43,6 @@ parameters:
       Cluster ingress wildcard domain. Get it with:
       oc get ingresses.config cluster -o jsonpath='{.spec.domain}'
     required: true
-  - name: DCR_PROXY_IMAGE
-    description: >-
-      DCR proxy image reference. Defaults to the image built into the cluster's internal
-      registry via `oc new-build` (see group-based-access.md §5). Override if pushing to
-      an external registry.
-    required: true
-    value: "image-registry.openshift-image-registry.svc:5000/mcp-gateway/entra-dcr-proxy:latest"
 objects:
   - apiVersion: apps/v1
     kind: Deployment
@@ -53,32 +61,30 @@ objects:
         spec:
           containers:
             - name: proxy
-              image: "${DCR_PROXY_IMAGE}"
+              image: ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.4
               ports:
                 - containerPort: 8080
               env:
                 - name: ENTRA_TENANT_ID
                   valueFrom:
                     secretKeyRef:
-                      name: entra-dcr-proxy-credentials
+                      name: mcp-gateway-secrets
                       key: entra-tenant-id
                 - name: PROXY_ENTRA_CLIENT_ID
                   valueFrom:
                     secretKeyRef:
-                      name: entra-dcr-proxy-credentials
+                      name: mcp-gateway-secrets
                       key: dcr-proxy-client-id
                 - name: PROXY_ENTRA_CLIENT_SECRET
                   valueFrom:
                     secretKeyRef:
-                      name: entra-dcr-proxy-credentials
+                      name: mcp-gateway-secrets
                       key: dcr-proxy-client-secret
                 - name: ENTRA_APP_CLIENT_ID
                   valueFrom:
                     secretKeyRef:
-                      name: entra-dcr-proxy-credentials
+                      name: mcp-gateway-secrets
                       key: entra-app-client-id
-                # Static per-gateway — one proxy instance per gateway. See group-based-access.md §5e
-                # for the multi-gateway limitation and the recommended long-term fix.
                 - name: PROXY_BASE_URL
                   value: "https://mcp-gw-dp.${CLUSTER_DOMAIN}/dcr"
               livenessProbe:
@@ -105,7 +111,7 @@ objects:
       ports:
         - port: 8080
           targetPort: 8080
-  # Exposed under /dcr on the existing DP hostname — no new DNS entry or certificate needed.
+  # /dcr paths — core proxy endpoints (register, token, authorize, health)
   - apiVersion: route.openshift.io/v1
     kind: Route
     metadata:
@@ -116,6 +122,24 @@ objects:
     spec:
       host: "mcp-gw-dp.${CLUSTER_DOMAIN}"
       path: /dcr
+      to:
+        kind: Service
+        name: entra-dcr-proxy
+      port:
+        targetPort: 8080
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+  # prmOverride — proxy serves /.well-known/oauth-protected-resource directly so MCP clients
+  # discover the DCR endpoint without any change to the gateway sidecar env.
+  - apiVersion: route.openshift.io/v1
+    kind: Route
+    metadata:
+      name: entra-dcr-proxy-prm
+      namespace: mcp-gateway
+    spec:
+      host: "mcp-gw-dp.${CLUSTER_DOMAIN}"
+      path: /.well-known/oauth-protected-resource
       to:
         kind: Service
         name: entra-dcr-proxy

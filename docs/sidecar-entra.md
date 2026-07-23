@@ -124,14 +124,11 @@ oc create secret generic sidecar-config \
   --from-literal=ENTRA_RESOURCE_URI=api://<CLIENT_ID> \
   --from-literal=GATEWAY_RESOURCE=https://mcp-gw-dp.$CLUSTER_DOMAIN \
   --from-literal=AZURE_KEYVAULT_URL=https://<KV_NAME>.vault.azure.net/ \
-  --from-literal=DCR_PROXY_URL=https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr \
   --from-literal=MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL=https://mcp-sidecar-oauth.$CLUSTER_DOMAIN \
   -n mcp-gateway
 ```
 
-See [`azure-setup.md`](azure-setup.md) for where each value comes from. Leave `DCR_PROXY_URL`
-and `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL` as empty strings (`--from-literal=DCR_PROXY_URL=`)
-for Milestone 2 — they are required for Milestone 3.
+See [`azure-setup.md`](azure-setup.md) for where each value comes from.
 
 ### Step 4b — Deploy the sidecar
 
@@ -318,6 +315,65 @@ oc logs deploy/mcp-entra-sidecar -n mcp-gateway --tail=30 | grep -E 'authenticat
 
 ---
 
+## Step 8b — Deploy the Entra DCR proxy (enables MCP client OAuth)
+
+The DCR proxy bridges RFC 7591 Dynamic Client Registration to Entra, so Claude Code, Claude
+Desktop, and VS Code can complete a full browser OAuth flow without pre-registering each client.
+It runs under the existing DP hostname at `/dcr` — no extra DNS or TLS certificate needed.
+
+The proxy image is published: `ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.4`.
+No cluster build required.
+
+**Prerequisites:** `mcp-gateway-secrets` must exist (created in [azure-setup.md §1h](azure-setup.md#1h-register-the-entra-dcr-proxy-application-milestone-2)).
+
+### Helm (recommended)
+
+```bash
+CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+
+helm install entra-dcr-proxy \
+  oci://ghcr.io/docker-pro-serv/charts/mcp-gateway-entra-dcr-proxy \
+  --version 0.1.4 \
+  --namespace mcp-gateway \
+  --set proxyBaseUrl=https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr \
+  --set route.enabled=true \
+  --set route.host=mcp-gw-dp.$CLUSTER_DOMAIN \
+  --set prmOverride.enabled=true
+
+oc rollout status deploy/entra-dcr-proxy -n mcp-gateway
+```
+
+`prmOverride.enabled=true` makes the proxy serve
+`/.well-known/oauth-protected-resource` directly — MCP clients discover the DCR endpoint
+automatically with no change to the sidecar env.
+
+### Raw manifests (if Helm is unavailable)
+
+```bash
+CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
+
+oc process -f manifests/entra-dcr-proxy.yaml \
+  -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
+  | oc apply -n mcp-gateway -f -
+
+oc rollout status deploy/entra-dcr-proxy -n mcp-gateway
+```
+
+### Verify
+
+```bash
+# Health check
+curl -s "https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr/health"
+# → {"status": "ok"}
+
+# Confirm MCP clients will discover the DCR endpoint
+curl -s "https://mcp-gw-dp.$CLUSTER_DOMAIN/.well-known/oauth-protected-resource" \
+  | jq .authorization_servers
+# → ["https://mcp-gw-dp.<domain>/dcr"]
+```
+
+---
+
 ## Step 9 — Connecting MCP clients
 
 The gateway requires a valid **Entra JWT** on every request; how each client obtains one differs.
@@ -344,9 +400,8 @@ azure-setup §1e (VS Code pre-authorized) **and** §1e-2 (public client + `http:
 
 ### 9b. Claude Code — full browser OAuth via DCR proxy
 
-With the Entra DCR proxy deployed (see [group-based-access.md §5](group-based-access.md#5-deploy-the-entra-dcr-proxy-enables-full-oauth-in-mcp-clients)),
-Claude Code completes a full browser OAuth flow automatically — no helper script or `az` session
-required:
+With the Entra DCR proxy deployed (Step 8b above), Claude Code completes a full browser OAuth
+flow automatically — no helper script or `az` session required:
 
 ```bash
 claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user

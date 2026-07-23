@@ -246,108 +246,38 @@ USER_B_TOKEN=$(az account get-access-token --scope "api://$APPID/access" --query
 
 ---
 
-## 5. Deploy the Entra DCR proxy (enables full OAuth in MCP clients)
+## 5. Verify the DCR proxy is running
 
-The DCR proxy bridges RFC 7591 Dynamic Client Registration to Entra, so Claude Code and
-Claude Desktop can complete a full OAuth PKCE flow without a `headersHelper` script.
-It runs as a lightweight pod and serves on `/dcr` under the existing DP hostname — no
-new Route hostname or TLS certificate is needed.
-
-### 5a. Build the DCR proxy image
-
-The DCR proxy source is in `temp/mcp-gateway-entra-dcr-proxy/`. Build it into the cluster's
-internal registry (same approach as the Entra sidecar in Milestone 2 Step 1B):
-
-```bash
-oc new-build --binary --strategy=docker --name=entra-dcr-proxy -n mcp-gateway
-oc start-build entra-dcr-proxy \
-  --from-dir=temp/mcp-gateway-entra-dcr-proxy \
-  -n mcp-gateway --follow
-```
-
-> The Dockerfile uses `dhi.io/python:3.12` as its base. If the cluster build pod can't pull
-> that image, swap it for `python:3.12-slim` in a local copy:
-> ```bash
-> sed 's|FROM dhi.io/python:3.12|FROM python:3.12-slim|' \
->   temp/mcp-gateway-entra-dcr-proxy/Dockerfile > /tmp/Dockerfile.build
-> oc start-build entra-dcr-proxy --from-dir=temp/mcp-gateway-entra-dcr-proxy -n mcp-gateway \
->   --from-file=Dockerfile=/tmp/Dockerfile.build --follow
-> ```
-
-### 5b. Create the DCR proxy credentials secret
-
-This was done as part of Azure setup (azure-setup.md §1h). Verify the secret exists:
-
-```bash
-oc get secret entra-dcr-proxy-credentials -n mcp-gateway
-```
-
-If it's missing, create it:
-
-```bash
-oc create secret generic entra-dcr-proxy-credentials \
-  --from-literal=entra-tenant-id=<TENANT_ID> \
-  --from-literal=dcr-proxy-client-id=<DCR_PROXY_APP_CLIENT_ID> \
-  --from-literal=dcr-proxy-client-secret=<DCR_PROXY_APP_CLIENT_SECRET> \
-  --from-literal=entra-app-client-id=<GATEWAY_APP_CLIENT_ID> \
-  -n mcp-gateway
-```
-
-See azure-setup.md §1h for where each value comes from.
-
-### 5c. Deploy the proxy
+The DCR proxy was deployed in [Milestone 2 Step 8b](sidecar-entra.md#step-8b--deploy-the-entra-dcr-proxy-enables-mcp-client-oauth).
+Confirm it is still up before proceeding — MCP client OAuth flows depend on it.
 
 ```bash
 CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
 
-oc process -f manifests/entra-dcr-proxy.yaml \
-  -p CLUSTER_DOMAIN="$CLUSTER_DOMAIN" \
-  | oc apply -n mcp-gateway -f -
-
-oc rollout status deploy/entra-dcr-proxy -n mcp-gateway
-```
-
-Verify the health endpoint is reachable through the Route:
-
-```bash
+# Health check
 curl -s "https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr/health"
-# expect: {"status":"ok"}
+# → {"status": "ok"}
+
+# Confirm OAuth discovery is working — clients find the DCR endpoint from this response
+curl -s "https://mcp-gw-dp.$CLUSTER_DOMAIN/.well-known/oauth-protected-resource" \
+  | jq .authorization_servers
+# → ["https://mcp-gw-dp.<domain>/dcr"]
 ```
 
-### 5d. Tell the sidecar about the DCR proxy
+If the proxy is not running, follow [Milestone 2 Step 8b](sidecar-entra.md#step-8b--deploy-the-entra-dcr-proxy-enables-mcp-client-oauth) to deploy it.
 
-The sidecar serves `/.well-known/oauth-protected-resource` — it must advertise the DCR proxy URL
-so MCP clients discover DCR + PKCE endpoints instead of going to Entra directly. Patch it into
-the sidecar Deployment:
+### Connecting MCP clients
 
-```bash
-CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
-DCR_URL="https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr"
-
-oc set env deploy/mcp-entra-sidecar DCR_PROXY_URL="$DCR_URL" -n mcp-gateway
-oc rollout status deploy/mcp-entra-sidecar -n mcp-gateway
-```
-
-### 5e. Connect MCP clients — full OAuth (no helper script)
-
-With the DCR proxy running, Claude Code, Claude Desktop, and VS Code can all authenticate
-via a standard browser OAuth flow:
+With the DCR proxy running, Claude Code, Claude Desktop, and VS Code authenticate via a full
+browser OAuth flow — no helper script needed:
 
 ```bash
-# One-line registration per user — no headersHelper needed
 claude mcp add --transport http pov-gateway <GATEWAY_URL> --scope user
 ```
 
-On first connection the client opens a browser window to sign in with the user's Entra account.
-Each user's tool list will differ based on their role assignment — `mcp-team-a` members see
-Granola, `mcp-team-b` members see Notion, everyone sees DuckDuckGo and GitHub.
-
-> **Multi-gateway limitation.** `PROXY_BASE_URL` is a static env var — it hardcodes the proxy
-> to one gateway's hostname. If you deploy multiple gateways on the same cluster, each needs its
-> own proxy instance and its own Route. The clean long-term fix is for the proxy to handle
-> `/.well-known/oauth-protected-resource/*` as a wildcard, extract the gateway suffix from the
-> path dynamically, and return it as the `resource` value in the PRM response — then one proxy
-> instance serves all gateways. That change lives in the proxy source, not in the manifests here.
+On first connection the client opens a browser window. Each user's tool list will differ based
+on their role assignment — `mcp-team-a` members see Granola, `mcp-team-b` members see Notion,
+everyone sees DuckDuckGo and GitHub.
 
 ---
 

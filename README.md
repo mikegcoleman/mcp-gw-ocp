@@ -601,15 +601,15 @@ Milestone 2 gives every authenticated user access to every server. **Milestone 3
 role-based server visibility: users in different Entra groups see different sets of MCP servers,
 with no sidecar code changes required.
 
-Demo scenario: all users see GitHub + DuckDuckGo; team-a (alice) additionally sees Opine;
-team-b (bob) additionally sees Granola. Server visibility is enforced by the gateway's built-in
+Demo scenario: all users see GitHub + DuckDuckGo; team-a additionally sees Granola;
+team-b additionally sees Notion. Server visibility is enforced by the gateway's built-in
 policy engine — users not in the right group simply don't see those servers in their tool list.
 
 **→ Full walkthrough: [docs/group-based-access.md](docs/group-based-access.md).**
 **→ Azure App Role setup: [docs/azure-setup.md](docs/azure-setup.md) §1c-2 and §1g-2.**
 
 Purely additive on top of Milestone 2. The only changes are new App Roles in Entra, assigning
-users to those roles, and adding `policies.rules` to the `MCPGateway` CR plus Opine and Granola
+users to those roles, and adding `policies.rules` to the `MCPGateway` CR plus Granola and Notion
 to the catalog.
 
 ---
@@ -631,20 +631,7 @@ oc delete pvc -l app.kubernetes.io/component=postgres -n mcp-gateway
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Operator/Postgres/Redis pod won't schedule (`runAsUser … must be in the ranges …`) | SCC blocking the fixed UID | Grant `nonroot-v2` to the affected SA (Step 3). |
-| `gwsvc` stuck in `Provisioning`; operator logs show `cannot set blockOwnerDeletion` on a ConfigMap | ClusterRole missing `gatewayserviceconfigs/finalizers` | Apply Step 5b. |
-| `MCPServer` PHASE `Failed` / `Degraded`, no `mcp-<name>` pod; operator logs show `cannot set blockOwnerDeletion` on a Deployment | ClusterRole missing `mcpservers/finalizers` | Apply Step 5b (it grants both finalizers). |
-| All `MCPGateway` CRs stuck in `Creating`; CP logs show `leases.coordination.k8s.io "…-provisioner" is forbidden` | `leaderElection` not enabled on the gwsvc, so the operator never created the gateway SA's lease RBAC | Set `spec.controlPlane.leaderElection.enabled: true` + `backend: k8s-lease` (Step 8) and re-apply the CR. |
-| `MCPServer` pod `ImagePullBackOff` with `no image found in image index for architecture "amd64"` | The server image is single-arch (e.g. arm64-only, built on Apple Silicon); ARO nodes are amd64 | Rebuild/push the image multi-arch: `docker buildx build --platform linux/amd64,linux/arm64 -t <img> --push .`, then `oc rollout restart deploy/mcp-<name>`. |
-| CP/DP pods `ImagePullBackOff` | Pull secret missing/not referenced | Confirm `ghcr-pull-secret` exists and the CR lists it under `imagePullSecrets`; re-auth with `read:packages`. |
-| Operator pod `ImagePullBackOff` | Operator SA can't pull from `-releases` | Confirm `--set 'mcp-operator.imagePullSecrets[0].name=ghcr-pull-secret'` was passed in Step 5. |
-| `zsh: no matches found: …imagePullSecrets[0]…` | zsh globs the `[0]` in a `--set` flag | Single-quote any `--set` value containing `[ ]`, e.g. `--set 'mcp-operator.imagePullSecrets[0].name=ghcr-pull-secret'`. |
-| Postgres pod `Pending` | No default StorageClass | `oc get storageclass`, then reinstall with `--set postgres.storageClass=<name>`. |
-| `field not declared in schema` on CR apply | CRD schema outdated | Apply the CRDs from the pulled chart (see Upgrading → CRDs). |
-| Operator logs `connection refused` to `cpEndpoint` | CP not up yet or wrong `cpEndpoint` | Wait for the CP pod to be Ready; verify `cpEndpoint` matches `<cr-name>-cp.<namespace>.svc.cluster.local:8080`. |
-| OAuth tools missing after authorization on a multi-replica DP | Redis unreachable | `oc logs -l app.kubernetes.io/name=redis -n mcp-gateway`; verify Redis is Running and DP pods reach it on 6379. |
+See [docs/troubleshooting.md](docs/troubleshooting.md) for the full troubleshooting reference covering all three milestones.
 
 ---
 

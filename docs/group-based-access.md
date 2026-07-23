@@ -453,20 +453,4 @@ policies:
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---------|-------------|-----|
-| Team server not visible at all | No matching allow rule (flip-to-deny) | Add an allow rule for that server + role combo |
-| Shared server (duckduckgo/github) gone for everyone | Their allow rules were removed | Re-add unconditional allow rules with no `role` field |
-| Server visible to wrong user | Rule missing the `role` field | Add `role: mcp-team-x` to the rule |
-| `roles` claim empty in token | User not assigned to the app role in Entra | Enterprise apps → Users and groups → assign the role |
-| Policy change not taking effect | `policies` block omitted (no-op update) | Use `rules: []` to clear, or add explicit rules and re-apply |
-| OAuth flow not triggering | `invokePrimordial` rule missing, or `oauth` plugin not in pluginConfig | Add `action: invokePrimordial` + `toolName: team-a-granola-authorize` (or `team-b-notion-authorize`) rule; to enable the gateway OAuth broker add `oauth: {provider: mcp, server: <sidecar-url>}` to pluginConfig **and** set `MCP_GATEWAY_OAUTH_PORT=8082` on the **sidecar** (not the DP) |
-| OAuth flow fails with `ForbiddenByRbac` / `setSecret` denied | SP has `Key Vault Secrets User` (read-only) but OAuth token write requires `Key Vault Secrets Officer` | `az role assignment create --assignee <SP_APP_ID> --role "Key Vault Secrets Officer" --scope <KV_ID>` (see azure-setup.md §2a) |
-| GitHub tools present but calls fail with 401 | No `github-pat-<oid>` in Key Vault for this user | Add the secret per [azure-setup.md §3](azure-setup.md#3-load-pat-secrets-into-key-vault) |
-| Catalog changes not taking effect | CP not restarted after ConfigMap change | `oc rollout restart deploy/mcp-gw-cp -n mcp-gateway` |
-| Tool blocked unexpectedly (Layer 2) | A deny rule in `team-a-policy` ConfigMap | `kubectl get cm team-a-policy -n mcp-gateway -o jsonpath='{.data.policy\.yaml}'` to inspect rules |
-| Policy ConfigMap change not taking effect | Kubelet volume sync delay (~60s) or pod restart needed | Wait ~60s after `kubectl apply`; verify with `kubectl exec <sidecar-pod> -- cat /etc/mcp-policy/policy.yaml` |
-| `evaluate_policy` not called (no sidecar logs) | `plugins.policy` key missing from GatewayServiceConfig | Patch pluginConfig: `plugins.policy.provider: mcp` + `plugins.policy.server: http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp`; delete DP pod to force config reload |
-| Claude Code OAuth browser never opens | DCR proxy not deployed or `DCR_PROXY_URL` not set on sidecar | Deploy `manifests/entra-dcr-proxy.yaml` and run `oc set env` from Step 5d |
-| DCR proxy pod crash-looping | `entra-dcr-proxy-credentials` secret missing or has wrong keys | Verify with `oc describe secret entra-dcr-proxy-credentials -n mcp-gateway` |
-| `/dcr/health` returns 503 from Route | Proxy pod not ready | `oc get pod -l app=entra-dcr-proxy -n mcp-gateway` and check logs |
+See [troubleshooting.md](troubleshooting.md) for the full troubleshooting reference covering all three milestones.

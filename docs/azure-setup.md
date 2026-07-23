@@ -65,20 +65,20 @@ users in different Entra groups see different MCP servers, with no sidecar code 
 
 Create two additional app roles — one per team:
 
-**MCP Team A** (Opine access):
+**MCP Team A** (Granola access):
 1. Go to **App roles → Create app role**
 2. Display name: `MCP Team A`
 3. Allowed member types: **Users/Groups**
 4. Value: `mcp-team-a`
-5. Description: `Opine AI access via MCP Gateway`
+5. Description: `Granola meeting notes access via MCP Gateway`
 6. Enable the role, click **Apply**
 
-**MCP Team B** (Granola access):
+**MCP Team B** (Notion access):
 1. Go to **App roles → Create app role**
 2. Display name: `MCP Team B`
 3. Allowed member types: **Users/Groups**
 4. Value: `mcp-team-b`
-5. Description: `Granola meeting notes access via MCP Gateway`
+5. Description: `Notion workspace access via MCP Gateway`
 6. Enable the role, click **Apply**
 
 > **The `value` field is what appears in the JWT `roles` claim.** It must exactly match (case-sensitive)
@@ -155,13 +155,13 @@ Finally, assign each group to its app role so the role appears in member JWTs.
 1. Go to **Azure Portal → Microsoft Entra ID → Groups → New group**
 2. Group type: **Security**
 3. Group name: `mcp-team-a`
-4. Add member: `msmikecol@hotmail.com` (alice — a B2B guest; must have accepted the invitation)
+4. Add member: `<USER_A_EMAIL>` (a B2B guest; must have accepted the invitation)
 5. Click **Create**
 
 Repeat for team-b:
 
 1. **New group**, type: **Security**, name: `mcp-team-b`
-2. Add member: `mike.coleman@docker.co` (bob — a B2B guest; must have accepted the invitation)
+2. Add member: `<USER_B_EMAIL>` (a B2B guest; must have accepted the invitation)
 3. Click **Create**
 
 > To add more users to a team later: **Groups → mcp-team-a → Members → Add members**.
@@ -246,16 +246,16 @@ oc create secret generic entra-dcr-proxy-credentials \
 APPID=<your-application-client-id>
 
 # Log in as alice and decode the roles claim
-az login --allow-no-subscriptions --username msmikecol@hotmail.com
+az login --allow-no-subscriptions --username <USER_A_EMAIL>
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
-# alice expects: ["MCPGateway.User", "mcp-team-a"]
+# user-a expects: ["MCPGateway.User", "mcp-team-a"]
 
-# Log in as bob and decode the roles claim
-az login --allow-no-subscriptions --username mike.coleman@docker.co
+# Log in as user-b and decode the roles claim
+az login --allow-no-subscriptions --username <USER_B_EMAIL>
 az account get-access-token --scope "api://$APPID/access" --query accessToken -o tsv \
   | cut -d. -f2 | base64 -d 2>/dev/null | jq '.roles'
-# bob expects: ["MCPGateway.User", "mcp-team-b"]
+# user-b expects: ["MCPGateway.User", "mcp-team-b"]
 ```
 
 > If `roles` is missing or empty, the user is not yet a member of a group that is assigned to
@@ -403,15 +403,15 @@ az ad app update --id "$APPID" --app-roles "$(echo "$EXISTING_ROLES" | python3 -
 import json,sys
 roles = json.load(sys.stdin)
 roles += [
-  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team A\",\"description\":\"Opine AI access via MCP Gateway\",\"value\":\"mcp-team-a\",\"id\":\"$TEAM_A_ROLE_ID\",\"isEnabled\":True},
-  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team B\",\"description\":\"Granola meeting notes access via MCP Gateway\",\"value\":\"mcp-team-b\",\"id\":\"$TEAM_B_ROLE_ID\",\"isEnabled\":True}
+  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team A\",\"description\":\"Granola meeting notes access via MCP Gateway\",\"value\":\"mcp-team-a\",\"id\":\"$TEAM_A_ROLE_ID\",\"isEnabled\":True},
+  {\"allowedMemberTypes\":[\"User\"],\"displayName\":\"MCP Team B\",\"description\":\"Notion workspace access via MCP Gateway\",\"value\":\"mcp-team-b\",\"id\":\"$TEAM_B_ROLE_ID\",\"isEnabled\":True}
 ]
 print(json.dumps(roles))
 ")"
 
 # ---- 1g-2: create security groups, add users, assign groups to app roles ----
-ALICE_OID=$(az ad user show --id "msmikecol@hotmail.com" --query id -o tsv)
-BOB_OID=$(az ad user show --id "mike.coleman@docker.co" --query id -o tsv)
+ALICE_OID=$(az ad user show --id "<USER_A_EMAIL>" --query id -o tsv)
+BOB_OID=$(az ad user show --id "<USER_B_EMAIL>" --query id -o tsv)
 
 # Create security groups
 TEAM_A_GROUP=$(az ad group create --display-name "mcp-team-a" --mail-nickname "mcp-team-a" --query id -o tsv)

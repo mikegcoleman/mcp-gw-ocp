@@ -1,7 +1,7 @@
 name: Deploy — Team A
 
-# Applies catalog-and-gateway.yaml and any team-a MCPServer CRs to the ARO cluster.
-# Triggered by alice (msmikecol@hotmail.com) pushing to main.
+# Applies team-a catalog, policy, and any team-a MCPServer CRs to the ARO cluster.
+# Triggered by the team-a owner pushing to main.
 #
 # Required GitHub repo secrets:
 #   OCP_SERVER        — OpenShift API server URL (oc whoami --show-server)
@@ -10,7 +10,7 @@ name: Deploy — Team A
 
 on:
   push:
-    branches: [main, feature/group-based-access]
+    branches: [main]
     paths:
       - 'catalog-team-a.yaml'
       - 'manifests/team-a-policy.yaml'

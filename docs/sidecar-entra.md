@@ -385,36 +385,4 @@ hourly (or via an equivalent helper).
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| Sidecar `CrashLoopBackOff` | Missing required env (`ENTRA_TENANT_ID`, `ENTRA_AUDIENCE`, `ENTRA_CLIENT_ID`, `GATEWAY_RESOURCE`, `AZURE_KEYVAULT_URL`) or wrong `azure-sp-credentials` key | `oc logs deploy/mcp-entra-sidecar -n mcp-gateway --previous`; verify env + secret keys |
-| `mcp-github` pod `unable to validate against any security context constraint … runAsUser` | Root server without the SCC grant | Apply Step 3 (`add-scc-to-user anyuid -z default`) |
-| `mcp-github` `ImagePullBackOff … no image found … architecture "amd64"` | Single-arch (arm64-only) image built on Apple Silicon | Rebuild `--platform linux/amd64,linux/arm64 --push` (Step 1) |
-| All requests now 401 after Step 7 | Expected — bearer auth is gone; present an Entra JWT | Use `az account get-access-token …` |
-| JWT rejected `wrong audience` | `ENTRA_AUDIENCE` must be the app **client ID** (GUID), not the `api://` URI (v2.0 tokens put client_id in `aud`) | Fix the env var, roll the sidecar |
-| GitHub call 401 / `get_connection_headers` empty | No `github-pat-<oid>` secret in Key Vault for that user | `az keyvault secret set --vault-name <kv> --name github-pat-<oid> --value <pat>` |
-| GitHub call `401 Bad credentials` (injection worked, GitHub rejected) | The `github-pat-<oid>` secret is expired/invalid or lacks scope | Store a valid PAT with the needed scopes in Key Vault |
-| Client OAuth: `AADSTS65001` (no consent) | The client's app-id isn't pre-authorized for the `access` scope | Pre-authorize the client id (azure-setup §1e); for CLI, the Azure CLI client |
-| Client OAuth: *"does not support dynamic client registration"* (Claude Code) | DCR proxy not reachable or `DCR_PROXY_URL` not set in `sidecar-config` | Verify `DCR_PROXY_URL=https://mcp-gw-dp.<domain>/dcr` in the sidecar env; confirm the proxy Route is up |
-| Client OAuth: `AADSTS9010010` (resource ≠ scope) | DCR proxy not routing correctly — Claude Code is hitting Entra directly | Same as above — check `DCR_PROXY_URL` and the proxy deployment |
-| Key Vault access denied | SP lacks `Key Vault Secrets User`, or KV is in access-policy (not RBAC) mode | Grant the role on the vault; switch KV to RBAC |
-
-**Bypassing the DCR proxy for diagnostics** — if you're seeing auth errors and aren't sure
-whether the issue is the proxy or the gateway/Entra config, bypass the proxy entirely with a
-static token to confirm the core stack is sound:
-
-```bash
-cat > ~/entra-mcp-token.sh <<'EOF'
-#!/bin/bash
-tok=$(az account get-access-token --scope "api://<APP_CLIENT_ID>/access" --query accessToken -o tsv)
-printf '{"Authorization":"Bearer %s"}' "$tok"
-EOF
-chmod +x ~/entra-mcp-token.sh
-
-claude mcp add-json pov-gateway \
-  '{"type":"http","url":"<GATEWAY_URL>","headersHelper":"/absolute/path/to/entra-mcp-token.sh"}'
-```
-
-If tools load with the helper but not with the DCR proxy, the proxy or its `DCR_PROXY_URL` env
-var is the issue. If tools don't load with either, the problem is in the gateway config or Entra
-app registration.
+See [troubleshooting.md](troubleshooting.md) for the full troubleshooting reference covering all three milestones.

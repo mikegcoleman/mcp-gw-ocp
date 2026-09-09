@@ -21,111 +21,108 @@ parameters:
     description: "Sidecar image (e.g. image-registry.openshift-image-registry.svc:5000/mcp-gateway/mcp-entra-sidecar:latest)"
     required: true
 objects:
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mcp-entra-sidecar
-  namespace: mcp-gateway
-  labels:
-    app: mcp-entra-sidecar
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mcp-entra-sidecar
-  template:
+  - apiVersion: apps/v1
+    kind: Deployment
     metadata:
+      name: mcp-entra-sidecar
+      namespace: mcp-gateway
       labels:
         app: mcp-entra-sidecar
     spec:
-      containers:
-        - name: sidecar
-          image: ${IMAGE}
-          imagePullPolicy: Always
-          ports:
-            - name: mcp
-              containerPort: 8080
-            - name: oauth
-              containerPort: 8082
-          # Deployment-specific values come from the sidecar-config Secret.
-          # Service principal credentials come from the azure-sp-credentials Secret.
-          # See docs/sidecar-entra.md Step 4a for how to create sidecar-config.
-          envFrom:
-            - secretRef:
-                name: sidecar-config
-            - secretRef:
-                name: azure-sp-credentials
-          env:
-            # Static config — safe to keep inline, not deployment-specific.
-            - name: MCP_GATEWAY_STORE_TYPE
-              value: "kv"
-            # MCP_GATEWAY_OAUTH_PORT starts the sidecar's OAuth callback server.
-            # The gateway DP's oauth: plugin calls oauth-start-callback-server on the
-            # sidecar during startup; if this env var is absent the DP crashes on boot.
-            - name: MCP_GATEWAY_OAUTH_PORT
-              value: "8082"
-            - name: MCP_GATEWAY_POLICY_DIR
-              value: "/etc/mcp-policy"
-
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            failureThreshold: 10
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 15
-            periodSeconds: 15
-            failureThreshold: 3
-          resources:
-            requests:
-              cpu: 50m
-              memory: 96Mi
-            limits:
-              cpu: 200m
-              memory: 192Mi
-          securityContext:
-            runAsNonRoot: true
-            runAsUser: 10001
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-          # readOnlyRootFilesystem is on, so give the process writable scratch dirs —
-          # uvicorn/httpx/the Azure SDK write temp + cache files. Without these the
-          # sidecar can fail at startup or on first Key Vault call.
-          volumeMounts:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: mcp-entra-sidecar
+      template:
+        metadata:
+          labels:
+            app: mcp-entra-sidecar
+        spec:
+          containers:
+            - name: sidecar
+              image: ${IMAGE}
+              imagePullPolicy: Always
+              ports:
+                - name: mcp
+                  containerPort: 8080
+                - name: oauth
+                  containerPort: 8082
+              # Deployment-specific values come from the sidecar-config Secret.
+              # Service principal credentials come from the azure-sp-credentials Secret.
+              # See docs/sidecar-entra.md Step 4a for how to create sidecar-config.
+              envFrom:
+                - secretRef:
+                    name: sidecar-config
+                - secretRef:
+                    name: azure-sp-credentials
+              env:
+                # Static config — safe to keep inline, not deployment-specific.
+                - name: MCP_GATEWAY_STORE_TYPE
+                  value: "kv"
+                # MCP_GATEWAY_OAUTH_PORT starts the sidecar's OAuth callback server.
+                # The gateway DP's oauth: plugin calls oauth-start-callback-server on the
+                # sidecar during startup; if this env var is absent the DP crashes on boot.
+                - name: MCP_GATEWAY_OAUTH_PORT
+                  value: "8082"
+                - name: MCP_GATEWAY_POLICY_DIR
+                  value: "/etc/mcp-policy"
+              readinessProbe:
+                httpGet:
+                  path: /healthz
+                  port: 8080
+                initialDelaySeconds: 5
+                periodSeconds: 5
+                failureThreshold: 10
+              livenessProbe:
+                httpGet:
+                  path: /healthz
+                  port: 8080
+                initialDelaySeconds: 15
+                periodSeconds: 15
+                failureThreshold: 3
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 96Mi
+                limits:
+                  cpu: 200m
+                  memory: 192Mi
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 10001
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+              # readOnlyRootFilesystem is on, so give the process writable scratch dirs —
+              # uvicorn/httpx/the Azure SDK write temp + cache files. Without these the
+              # sidecar can fail at startup or on first Key Vault call.
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: cache
+                  mountPath: /.cache
+                - name: team-a-policy
+                  mountPath: /etc/mcp-policy
+                  readOnly: true
+          volumes:
             - name: tmp
-              mountPath: /tmp
+              emptyDir: {}
             - name: cache
-              mountPath: /.cache
+              emptyDir: {}
             - name: team-a-policy
-              mountPath: /etc/mcp-policy
-              readOnly: true
-      volumes:
-        - name: tmp
-          emptyDir: {}
-        - name: cache
-          emptyDir: {}
-        - name: team-a-policy
-          configMap:
-            name: team-a-policy
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-entra-sidecar
-  namespace: mcp-gateway
-spec:
-  selector:
-    app: mcp-entra-sidecar
-  ports:
-    - name: mcp
-      port: 8080
-      targetPort: 8080
-    - name: oauth
-      port: 8082
-      targetPort: 8082
+              configMap:
+                name: team-a-policy
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: mcp-entra-sidecar
+      namespace: mcp-gateway
+    spec:
+      selector:
+        app: mcp-entra-sidecar
+      ports:
+        - name: mcp
+          port: 8080
+          targetPort: 8080
+        - name: oauth
+          port: 8082
+          targetPort: 8082

@@ -1,0 +1,78 @@
+# Helm values for grafana/loki (chart 7.3.0) — single-binary mode, filesystem storage.
+# A minimal, single-replica log store for this PoV; not sized for production retention.
+#
+# Apply:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install loki grafana/loki --version 7.3.0 -n mcp-gateway -f manifests/loki-values.yaml
+#
+# OpenShift note: the chart's memcached-based caches (chunksCache/resultsCache) run with a
+# fixed UID (11211) that restricted-v2 rejects and nonroot-v2 can't rescue either (the UID
+# falls outside the namespace's allocated range) — disabled below rather than granted an SCC.
+# The main loki pod's fixed UID (10001) IS rescuable with nonroot-v2:
+#   oc adm policy add-scc-to-user nonroot-v2 -z loki -n mcp-gateway
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+
+# SimpleScalable-mode components — must be explicitly zeroed even in SingleBinary mode,
+# or `helm install` refuses with "more than zero replicas configured for both... targets".
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+ingester:
+  replicas: 0
+distributor:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+indexGateway:
+  replicas: 0
+compactor:
+  replicas: 0
+ruler:
+  replicas: 0
+
+gateway:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+monitoring:
+  selfMonitoring:
+    enabled: false
+  lokiCanary:
+    enabled: false
+  serviceMonitor:
+    enabled: false

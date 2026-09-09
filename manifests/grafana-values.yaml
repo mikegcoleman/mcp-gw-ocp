@@ -1,0 +1,59 @@
+# Helm values for grafana/grafana (chart 10.5.15). Datasources are pre-provisioned:
+# OpenShift's user-workload-monitoring Prometheus (via thanos-querier) and Loki.
+#
+# ${PROM_TOKEN} is a placeholder — substitute it before applying (docs/observability.md
+# has the full flow). Do not commit a rendered copy of this file with a real token in it.
+#
+# Apply:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   PROM_TOKEN=$(oc create token grafana-prom-reader -n mcp-gateway --duration=8760h)
+#   python3 -c "
+#   import os
+#   c = open('manifests/grafana-values.yaml').read().replace('\${PROM_TOKEN}', os.environ['PROM_TOKEN'])
+#   open('/tmp/grafana-values-rendered.yaml', 'w').write(c)
+#   "
+#   helm install grafana grafana/grafana --version 10.5.15 -n mcp-gateway -f /tmp/grafana-values-rendered.yaml
+#
+# OpenShift note: `oc adm policy add-scc-to-user nonroot-v2 -z grafana -n mcp-gateway`
+# is still required — nonroot-v2 covers the main container's arbitrary UID, but the
+# chart's chown-data init container (disabled below) wants a fixed root UID + the CHOWN
+# capability, which no SCC here grants. Disabling it and clearing securityContext lets
+# OpenShift assign a UID/fsGroup from the namespace's own allocated range instead.
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: managed-csi
+
+initChownData:
+  enabled: false
+
+securityContext: {}
+containerSecurityContext:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  privileged: false
+
+service:
+  type: ClusterIP
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus (UWM)
+        type: prometheus
+        access: proxy
+        url: https://thanos-querier.openshift-monitoring.svc:9091
+        isDefault: true
+        jsonData:
+          httpHeaderName1: Authorization
+          tlsSkipVerify: true
+          timeInterval: 30s
+        secureJsonData:
+          httpHeaderValue1: "Bearer ${PROM_TOKEN}"
+      - name: Loki
+        type: loki
+        access: proxy
+        url: http://loki.mcp-gateway.svc.cluster.local:3100
+        jsonData:
+          maxLines: 1000

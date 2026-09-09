@@ -612,6 +612,14 @@ Purely additive on top of Milestone 2. The only changes are new App Roles in Ent
 users to those roles, and adding `policies.rules` to the `MCPGateway` CR plus Granola and Notion
 to the catalog.
 
+## What's next — Observability (metrics + logs)
+
+Wires the gateway's built-in OTel Collector to OpenShift's own Prometheus (metrics) and a
+Loki + Grafana stack (logs), with Grafana as the single pane of glass over both. Works from
+Milestone 1 onward — purely additive, nothing in the auth/catalog/policy path changes.
+
+**→ Full walkthrough: [docs/observability.md](docs/observability.md).**
+
 ---
 
 ## Uninstalling

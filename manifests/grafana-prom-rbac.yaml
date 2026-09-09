@@ -1,0 +1,25 @@
+# Lets Grafana query OpenShift's user-workload-monitoring Prometheus (via the
+# thanos-querier Service in openshift-monitoring), which requires a bearer token
+# from a ServiceAccount bound to the cluster-monitoring-view ClusterRole.
+#
+# Apply: oc apply -f manifests/grafana-prom-rbac.yaml
+# Then mint a token for the Grafana datasource (docs/observability.md has the full flow):
+#   oc create token grafana-prom-reader -n mcp-gateway --duration=8760h
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-prom-reader
+  namespace: mcp-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-prom-reader-view
+subjects:
+  - kind: ServiceAccount
+    name: grafana-prom-reader
+    namespace: mcp-gateway
+roleRef:
+  kind: ClusterRole
+  name: cluster-monitoring-view
+  apiGroup: rbac.authorization.k8s.io

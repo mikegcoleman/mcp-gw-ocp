@@ -76,6 +76,13 @@ and **no `gateway-service` subchart**.
 | `manifests/team-a-policy.yaml` | M3 alice's tool-level policy ConfigMap. Rules read by `evaluate_policy` in the sidecar. |
 | `.github/workflows/deploy-team-a.yml` | M3 alice's GHA pipeline — applies `catalog-team-a.yaml` + `manifests/team-a-policy.yaml`. |
 | `manifests/rbac-pipeline.yaml` | M3 RBAC for `team-a-pipeline` SA. |
+| `docs/observability.md` | Observability guide — gateway metrics to OpenShift Prometheus, logs to Loki, Grafana as the pane of glass. Additive on top of any milestone. |
+| `manifests/cluster-monitoring-config.yaml` | Enables OpenShift user-workload monitoring (cluster-scoped, cluster-admin). |
+| `manifests/loki-values.yaml` | Helm values for `grafana/loki` — single-binary, filesystem storage. |
+| `manifests/otel-aggregator-values.yaml` | Helm values for `open-telemetry/opentelemetry-collector` — the fan-out collector the gateway's `tenantRouting` points at (metrics → Prometheus scrape, logs → Loki OTLP). |
+| `manifests/otel-aggregator-servicemonitor.yaml` | ServiceMonitor so OpenShift's Prometheus scrapes the aggregator. |
+| `manifests/grafana-prom-rbac.yaml` | SA + ClusterRoleBinding (`cluster-monitoring-view`) letting Grafana query OpenShift's Thanos Querier. |
+| `manifests/grafana-values.yaml` | Helm values for `grafana/grafana`, pre-provisioned with the Prometheus + Loki datasources. |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
 CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
@@ -175,6 +182,30 @@ a published release.
     without it, catalog entries with `oauth.providers` are deferred as "pre-auth OAuth servers" and the
     `<server>-authorize` primordial never appears. Note: `static_tools` proto field was removed; static
     tool declarations in the catalog no longer surface for deferred servers.
+11. **`observability.collector.customerExporter` (Prometheus) and `.tenantRouting` (arbitrary OTLP) are
+    mutually exclusive for the customer pipelines.** Enabling `tenantRouting` supersedes
+    `customerExporter`/`customerLogsExporter` entirely for `metrics/customer` and `logs/customer` — there
+    is no CR field to point a self-service named exporter (`customerLogsExporter: "otlp"`, say) at an
+    arbitrary endpoint outside of `tenantRouting`; that field is just a name string that "must be defined
+    in the collector config" with nothing exposing that definition. To get Prometheus-scraped metrics *and*
+    a self-configured log destination (e.g. Loki) at once, point `tenantRouting` (one tenant, `tenantID`
+    matching `GATEWAY_TENANT_ID`) at a small collector you own, which then fans out however you like. See
+    [`docs/observability.md`](docs/observability.md).
+12. **`oc create route --port=<number>` can silently produce a dead Route** when the target Service's
+    `targetPort` is a **name**, not a number (e.g. `port: 80` → `targetPort: grafana`). The Route admits
+    fine (`Admitted: True`) and Endpoints are healthy, but the router never populates a `server` line for
+    the backend — persistent `503 Application is not available`, and even a full router pod restart
+    doesn't fix it. Fix: pass the Service's port **name** to `--port` instead (`--port=service`, matching
+    whatever the Service actually calls it) — or set `spec.port.targetPort` to the name directly in a raw
+    Route manifest. The main guide's CP/DP Routes dodge this because those Services use a numeric
+    `targetPort` equal to `port`.
+13. **A Helm chart's fixed-UID "chown the data volume" init container (Grafana, Bitnami-style charts) needs
+    more than `nonroot-v2`.** It typically wants `runAsUser: 0` plus the `CHOWN` capability, both of which
+    every SCC here forbids. Don't grant a broader SCC for it — disable the init container
+    (`initChownData.enabled: false` for the Grafana chart) and clear the pod's `securityContext` so
+    OpenShift assigns a UID/fsGroup from the namespace's own allocated range instead. Plain fixed-UID
+    containers with no chown/root requirement (Loki, the Entra sidecar, the operator/Postgres/Redis) are
+    the ones `nonroot-v2` actually fixes.
 
 ## MCP protocol reality (for testing the gateway over HTTP)
 

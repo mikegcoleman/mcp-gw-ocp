@@ -1,0 +1,17 @@
+# Enables OpenShift's user-workload monitoring (a second, cluster-managed Prometheus
+# that scrapes ServiceMonitors in ordinary namespaces, separate from the platform's own
+# openshift-monitoring stack). Required before manifests/otel-aggregator-servicemonitor.yaml
+# has anything to scrape it.
+#
+# This is a cluster-scoped, cluster-admin change (the ConfigMap lives in
+# openshift-monitoring, not mcp-gateway) — see docs/observability.md before applying.
+#
+# Apply: oc apply -f manifests/cluster-monitoring-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true

@@ -36,9 +36,33 @@ objects:
       serviceAccountName: mcp-gw
       secretsRef:
         name: mcp-gateway-gateway-service    # <release>-gateway-service (rendered by the chart)
-      # No plugin sidecar: client auth is the gateway's built-in static bearer token.
-      # (Turning the sidecar on later swaps this for IdP auth + unlocks upstream OAuth —
-      # the servers/catalog/gateway below carry over unchanged.)
+      # Metrics + logs export: the gateway's built-in OTel Collector sidecar can't send
+      # customer metrics (plain Prometheus scrape) and customer logs (named OTLP exporter)
+      # at once outside of tenantRouting - tenantRouting fans BOTH signals for a tenant to
+      # one OTLP destination together. So we point tenantRouting at our own small
+      # "aggregator" collector (helm release otel-aggregator), which fans out from there:
+      # metrics -> its own /metrics scrape endpoint (OpenShift user-workload-monitoring
+      # ServiceMonitor), logs -> Loki's native OTLP endpoint. tenantID "default" matches
+      # the sidecar's authenticate() principal.tenant_id (GATEWAY_TENANT_ID, default
+      # "default") so all traffic through this gateway routes here.
+      observability:
+        collector:
+          enabled: true
+          signals:
+            metrics: true
+            logs: true
+            traces: false
+          tenantRouting:
+            enabled: true
+            tenants:
+              - tenantID: default
+                type: otlphttp
+                endpoint: "http://otel-aggregator-opentelemetry-collector.mcp-gateway.svc.cluster.local:4318"
+                insecure: true
+      # sidecar.enabled stays false even with Entra auth wired up (M2/M3): the Entra
+      # sidecar runs as its own standalone Deployment (manifests/sidecar-deployment.yaml),
+      # not as an operator-injected in-pod sidecar. dataPlane.pluginConfig below points
+      # gateway_auth/oauth/policy at it directly.
       sidecar:
         enabled: false
       controlPlane:
@@ -63,22 +87,28 @@ objects:
             memory: 2Gi
       dataPlane:
         replicas: 1
-        # Client→gateway auth: built-in static bearer token (no IdP, no sidecar).
-        # The DP validates `Authorization: Bearer <token>` against MCP_GATEWAY_AUTH_TOKEN.
+        # Client→gateway auth: Entra JWTs validated by the standalone Entra sidecar,
+        # plus per-user credential delegation, the OAuth broker (M3 team servers), and
+        # the sidecar policy lane (M3 evaluate_policy). Supersedes the M1 bearer plugin.
         pluginConfig: |
           plugins:
             gateway_auth:
-              provider: in-memory
-              implementation: anonymous-desktop-bearer-token
-              config:
-                tenant_id: default
-        # Source the bearer token from the Secret created in Step 4.
-        extraEnv:
-          - name: MCP_GATEWAY_AUTH_TOKEN
-            valueFrom:
-              secretKeyRef:
-                name: mcp-gateway-auth
-                key: auth-token
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+            oauth:
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+            policy:
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+          auth_delegators:
+            - name: entra-sidecar
+              strategy: remote
+              provider: mcp
+              server: "http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp"
+          auth_delegation:
+            defaults:
+              remote: entra-sidecar
         resources:
           requests:
             cpu: 200m

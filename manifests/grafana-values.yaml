@@ -39,8 +39,17 @@ service:
 datasources:
   datasources.yaml:
     apiVersion: 1
+    # Deletes-then-recreates by name: needed once, the first time explicit `uid:` fields
+    # are introduced for datasources Grafana previously auto-assigned a UID to (file
+    # provisioning won't just re-key an existing entry to a new UID on its own).
+    deleteDatasources:
+      - name: Prometheus (UWM)
+        orgId: 1
+      - name: Loki
+        orgId: 1
     datasources:
       - name: Prometheus (UWM)
+        uid: mcp-gw-prometheus-uwm
         type: prometheus
         access: proxy
         url: https://thanos-querier.openshift-monitoring.svc:9091
@@ -52,6 +61,7 @@ datasources:
         secureJsonData:
           httpHeaderValue1: "Bearer ${PROM_TOKEN}"
       - name: Loki
+        uid: mcp-gw-loki
         type: loki
         access: proxy
         url: http://loki.mcp-gateway.svc.cluster.local:3100

@@ -82,7 +82,8 @@ and **no `gateway-service` subchart**.
 | `manifests/otel-aggregator-values.yaml` | Helm values for `open-telemetry/opentelemetry-collector` — the fan-out collector the gateway's `tenantRouting` points at (metrics → Prometheus scrape, logs → Loki OTLP). |
 | `manifests/otel-aggregator-servicemonitor.yaml` | ServiceMonitor so OpenShift's Prometheus scrapes the aggregator. |
 | `manifests/grafana-prom-rbac.yaml` | SA + ClusterRoleBinding (`cluster-monitoring-view`) letting Grafana query OpenShift's Thanos Querier. |
-| `manifests/grafana-values.yaml` | Helm values for `grafana/grafana`, pre-provisioned with the Prometheus + Loki datasources. |
+| `manifests/grafana-values.yaml` | Helm values for `grafana/grafana`, pre-provisioned with the Prometheus + Loki datasources (pinned `uid:` fields — see gotcha below). |
+| `manifests/grafana-dashboard-mcp-gateway.json` | "MCP Gateway — Overview" dashboard — request rate/latency/status by CP/DP, tool call rate + p95 latency by server, top-tools table, log volume + raw logs from Loki. Imported via the Grafana API (`docs/observability.md` Step 8); persists in Grafana's own DB (PVC-backed). |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
 CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
@@ -206,6 +207,15 @@ a published release.
     OpenShift assigns a UID/fsGroup from the namespace's own allocated range instead. Plain fixed-UID
     containers with no chown/root requirement (Loki, the Entra sidecar, the operator/Postgres/Redis) are
     the ones `nonroot-v2` actually fixes.
+14. **Grafana file-provisioning won't re-key an existing datasource to a new `uid:`.** Adding an explicit
+    `uid:` to a datasource that Grafana previously auto-assigned a UID to (same `name`) crashes the pod on
+    the next rollout: `Datasource provisioning error: data source not found`, because provisioning looks
+    the entry up by the new UID, doesn't find it, and doesn't fall back to matching by name. The old pod
+    keeps serving traffic (Deployment rolling-update default), so the crash isn't always obvious. Fix: add
+    a `deleteDatasources: [{name: ..., orgId: 1}]` entry for it in the same provisioning file — this
+    deletes-then-recreates it under the new UID, once. `manifests/grafana-values.yaml` pins UIDs
+    (`mcp-gw-prometheus-uwm`, `mcp-gw-loki`) so `manifests/grafana-dashboard-mcp-gateway.json` can reference
+    them reliably.
 
 ## MCP protocol reality (for testing the gateway over HTTP)
 

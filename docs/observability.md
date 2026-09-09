@@ -202,6 +202,40 @@ Open `https://grafana.$CLUSTER_DOMAIN`, log in, and both the **Prometheus (UWM)*
 **Loki** datasources should already be provisioned (Connections → Data sources) with green
 health checks.
 
+## Step 8 — Import the "MCP Gateway — Overview" dashboard
+
+`manifests/grafana-dashboard-mcp-gateway.json` covers request rate/latency/status by CP vs
+DP, tool call rate and p95 latency by server, a top-tools table, and a log volume + raw log
+view from Loki. It uses the metric and label names the gateway actually emits (`mcp_component`,
+`mcp_server_name`, `mcp_tool_name`, `http_status_class`, etc.) — confirmed against a live
+gateway rather than guessed from the docs.
+
+Import it via the API (this persists into Grafana's own database, backed by the PVC from
+`grafana-values.yaml`, so it survives pod restarts without re-importing):
+
+```bash
+python3 -c "
+import json
+dash = json.load(open('manifests/grafana-dashboard-mcp-gateway.json'))
+print(json.dumps({'dashboard': dash, 'overwrite': True}))
+" > /tmp/dashboard-payload.json
+
+curl -sS -u "admin:<password>" -X POST "https://grafana.$CLUSTER_DOMAIN/api/dashboards/db" \
+  -H "Content-Type: application/json" -k --data-binary @/tmp/dashboard-payload.json
+rm /tmp/dashboard-payload.json
+```
+
+Or import it by hand: Grafana → Dashboards → New → Import → paste the file's contents.
+
+The dashboard JSON hard-codes the datasource UIDs (`mcp-gw-prometheus-uwm`,
+`mcp-gw-loki`) — these are pinned explicitly in `grafana-values.yaml`'s `datasources:` block
+rather than left for Grafana to auto-assign, specifically so the dashboard JSON can reference
+them reliably. If you ever change a datasource's `uid:` in `grafana-values.yaml`, update the
+dashboard JSON (or the running dashboard's panel JSON) to match, and add a `deleteDatasources`
+entry for the old name so file-provisioning replaces the existing entry instead of erroring
+with `Datasource provisioning error: data source not found` (provisioning doesn't re-key an
+existing datasource to a new UID on its own).
+
 ---
 
 ## Troubleshooting

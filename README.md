@@ -637,6 +637,20 @@ helm uninstall mcp-gateway -n mcp-gateway
 oc delete pvc -l app.kubernetes.io/component=postgres -n mcp-gateway
 ```
 
+> If you followed [docs/observability.md](docs/observability.md), that stack isn't touched by
+> the above — it has its own teardown:
+> ```bash
+> oc delete servicemonitor otel-aggregator -n mcp-gateway
+> helm uninstall grafana loki otel-aggregator -n mcp-gateway
+> oc delete pvc -l app.kubernetes.io/instance=loki -n mcp-gateway
+> oc delete pvc -l app.kubernetes.io/instance=grafana -n mcp-gateway
+> oc delete -f manifests/grafana-prom-rbac.yaml
+>
+> # Only if nothing else in the cluster depends on it — this is a cluster-scoped setting,
+> # not namespace-scoped, so check before disabling on a shared cluster:
+> oc delete configmap cluster-monitoring-config -n openshift-monitoring
+> ```
+
 ## Troubleshooting
 
 See [docs/troubleshooting.md](docs/troubleshooting.md) for the full troubleshooting reference covering all three milestones.

@@ -111,9 +111,30 @@ oc rollout status deploy/otel-aggregator-opentelemetry-collector -n mcp-gateway 
 
 ## Step 4 — Wire the gateway to the aggregator
 
-Add the `observability` block to `gatewayserviceconfig.yaml`'s `spec` (see the file in this
-repo for the exact block — it's already there, alongside the `dataPlane`/`controlPlane`
-config from whichever milestone you're on). Re-apply and force a fresh sidecar injection:
+Add an `observability` block as a sibling of `controlPlane`/`dataPlane` in
+`gatewayserviceconfig.yaml`'s `spec` — it's independent of whichever milestone's
+`dataPlane.pluginConfig` you're currently on (M1 bearer, M2 Entra, or M3 Entra+policy all set
+`tenant_id`/`GATEWAY_TENANT_ID` to `"default"`, which is what `tenantID: default` below
+matches on):
+
+```yaml
+      observability:
+        collector:
+          enabled: true
+          signals:
+            metrics: true
+            logs: true
+            traces: false
+          tenantRouting:
+            enabled: true
+            tenants:
+              - tenantID: default
+                type: otlphttp
+                endpoint: "http://otel-aggregator-opentelemetry-collector.mcp-gateway.svc.cluster.local:4318"
+                insecure: true
+```
+
+Re-apply and force a fresh sidecar injection:
 
 ```bash
 oc process -f gatewayserviceconfig.yaml \

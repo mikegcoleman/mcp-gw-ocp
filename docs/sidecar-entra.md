@@ -322,7 +322,7 @@ The DCR proxy bridges RFC 7591 Dynamic Client Registration to Entra, so Claude C
 Desktop, and VS Code can complete a full browser OAuth flow without pre-registering each client.
 It runs under the existing DP hostname at `/dcr` — no extra DNS or TLS certificate needed.
 
-The proxy image is published: `ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.4`.
+The proxy image is published: `ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.5`.
 No cluster build required.
 
 **Prerequisites:** `mcp-gateway-secrets` must exist (created in [azure-setup.md §1h](azure-setup.md#1h-register-the-entra-dcr-proxy-application-milestone-2)).
@@ -334,19 +334,32 @@ CLUSTER_DOMAIN=$(oc get ingresses.config cluster -o jsonpath='{.spec.domain}')
 
 helm install entra-dcr-proxy \
   oci://ghcr.io/docker-pro-serv/charts/mcp-gateway-entra-dcr-proxy \
-  --version 0.1.4 \
+  --version 0.1.5 \
   --namespace mcp-gateway \
   --set proxyBaseUrl=https://mcp-gw-dp.$CLUSTER_DOMAIN/dcr \
   --set route.enabled=true \
   --set route.host=mcp-gw-dp.$CLUSTER_DOMAIN \
-  --set prmOverride.enabled=true
+  --set prmOverride.enabled=true \
+  --set resourceUrl=https://mcp-gw-dp.$CLUSTER_DOMAIN/gateways/sk/pov-gateway/mcp
 
-oc rollout status deploy/entra-dcr-proxy -n mcp-gateway
+oc rollout status deploy/entra-dcr-proxy-mcp-gateway-entra-dcr-proxy -n mcp-gateway
 ```
 
 `prmOverride.enabled=true` makes the proxy serve
 `/.well-known/oauth-protected-resource` directly — MCP clients discover the DCR endpoint
 automatically with no change to the sidecar env.
+
+> **`resourceUrl` is required — do not skip it.** It's only supported from chart **v0.1.5**
+> onward (`v0.1.4` silently ignores it, having no such field at all). Without it, the proxy
+> defaults its PRM `resource` to `<gateway-host>/mcp`, and registers a matching
+> `/.well-known/oauth-protected-resource/mcp` route — but the gateway's actual MCP path is
+> `/gateways/sk/pov-gateway/mcp`, which is exactly what the DP's own `WWW-Authenticate` challenge
+> header advertises (`resource_metadata="https://<host>/.well-known/oauth-protected-resource
+> /gateways/sk/pov-gateway/mcp"`) on every unauthenticated request. A client that correctly
+> follows that header (e.g. Claude Code) gets a 404 on PRM discovery and fails with *"Dynamic
+> Client Registration rejected (HTTP 404)"* — curling the bare `/.well-known/oauth-protected-
+> resource` root still looks fine, which is why this is easy to miss in testing. Set
+> `resourceUrl` to the exact URL from Step 8's `GATEWAY_URL`/`status.endpoints.sk`.
 
 ### Raw manifests (if Helm is unavailable)
 

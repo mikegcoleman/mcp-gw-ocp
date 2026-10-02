@@ -372,13 +372,22 @@ per request; how clients get one differs, and this is where the real friction li
   server-side Entra setup is correct and isolates the Claude Code gap below as client-side. Needs the
   app to pre-authorize VS Code's client-id (`aebc6443…`) + be a public client with an
   `http://localhost` redirect (azure-setup §1e/§1e-2).
-- **Claude Code** — **interactive Entra OAuth does not work** (two upstream gaps: Entra has no
-  RFC 7591 DCR → *"does not support dynamic client registration"*; and even with `--client-id`,
-  Claude Code's RFC 8707 `resource` param = the gateway URL, which Entra rejects against the scope →
+- **Claude Code** — direct Entra OAuth doesn't work (two upstream gaps: Entra has no RFC 7591
+  DCR → *"does not support dynamic client registration"*; and even with `--client-id`, Claude
+  Code's RFC 8707 `resource` param = the gateway URL, which Entra rejects against the scope →
   `AADSTS9010010`). The gateway data plane sets the PRM `resource` per RFC 9728, so it can't be
-  fixed sidecar-side. **Verified working path: a `headersHelper` token script** (`az account
-  get-access-token --scope api://<app-id>/access`), fleet-distributed via `managed-mcp.json` (MDM).
-  Not a gateway limitation — a Claude↔Entra gap.
+  fixed sidecar-side directly — **fixed by the Entra DCR proxy** (M2 Step 8b in
+  `docs/sidecar-entra.md`), which bridges RFC 7591 DCR to Entra. With it deployed, `claude mcp
+  add --transport http pov-gateway <GATEWAY_URL> --scope user` does a full browser OAuth flow,
+  no helper script needed. **Gotcha:** the proxy's `resourceUrl` Helm value (chart **v0.1.5+**
+  only — `v0.1.4` has no such field) MUST be set to the gateway's exact MCP path
+  (`.../gateways/sk/pov-gateway/mcp`), not left at the image default (`<host>/mcp`) — otherwise
+  the proxy's PRM route doesn't match the path the DP's own `WWW-Authenticate` header advertises,
+  and Claude Code fails with `Dynamic Client Registration rejected (HTTP 404)` even though the
+  bare `/.well-known/oauth-protected-resource` root looks fine when curled directly. A plain
+  `az account get-access-token --scope api://<app-id>/access` → `headersHelper` script (fleet-
+  distributed via `managed-mcp.json`/MDM) still works as a fallback that bypasses the proxy
+  entirely, if you'd rather not run it.
 - Static bearer works for any HTTP client as a fallback.
 
 ## Working in this repo

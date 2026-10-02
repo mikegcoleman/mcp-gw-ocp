@@ -13,12 +13,16 @@
 #
 #   helm install entra-dcr-proxy \
 #     oci://ghcr.io/docker-pro-serv/charts/mcp-gateway-entra-dcr-proxy \
-#     --version 0.1.4 \
+#     --version 0.1.5 \
 #     --namespace mcp-gateway \
 #     --set proxyBaseUrl=https://<GATEWAY_HOSTNAME>/dcr \
 #     --set route.enabled=true \
 #     --set route.host=<GATEWAY_HOSTNAME> \
-#     --set prmOverride.enabled=true
+#     --set prmOverride.enabled=true \
+#     --set resourceUrl=https://<GATEWAY_HOSTNAME>/gateways/sk/pov-gateway/mcp
+#
+#   resourceUrl needs chart v0.1.5+ (v0.1.4 has no such field) and MUST match the gateway's
+#   real MCP path exactly — see the note in docs/sidecar-entra.md Step 8b.
 #
 # Raw manifest alternative (this file) — use if Helm is unavailable:
 #
@@ -61,7 +65,7 @@ objects:
         spec:
           containers:
             - name: proxy
-              image: ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.4
+              image: ghcr.io/docker-pro-serv/mcp-gateway-entra-dcr-proxy:0.1.5
               ports:
                 - containerPort: 8080
               env:
@@ -87,6 +91,12 @@ objects:
                       key: entra-app-client-id
                 - name: PROXY_BASE_URL
                   value: "https://mcp-gw-dp.${CLUSTER_DOMAIN}/dcr"
+                # Must exactly match the gateway's real MCP path — this is the path the DP's
+                # own WWW-Authenticate `resource_metadata` challenge advertises. Left at the
+                # image's default (<host>/mcp) it registers the wrong PRM route and any client
+                # that follows the challenge header (e.g. Claude Code) gets a 404 on discovery.
+                - name: RESOURCE_URL
+                  value: "https://mcp-gw-dp.${CLUSTER_DOMAIN}/gateways/sk/pov-gateway/mcp"
               livenessProbe:
                 httpGet:
                   path: /health

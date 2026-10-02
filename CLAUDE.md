@@ -83,7 +83,8 @@ and **no `gateway-service` subchart**.
 | `manifests/otel-aggregator-servicemonitor.yaml` | ServiceMonitor so OpenShift's Prometheus scrapes the aggregator. |
 | `manifests/grafana-prom-rbac.yaml` | SA + ClusterRoleBinding (`cluster-monitoring-view`) letting Grafana query OpenShift's Thanos Querier. |
 | `manifests/grafana-values.yaml` | Helm values for `grafana/grafana`, pre-provisioned with the Prometheus + Loki datasources (pinned `uid:` fields — see gotcha below). |
-| `manifests/grafana-dashboard-mcp-gateway.json` | "MCP Gateway — Overview" dashboard — request rate/latency/status by CP/DP, tool call rate + p95 latency by server, top-tools table, log volume + raw logs from Loki. Imported via the Grafana API (`docs/observability.md` Step 8); persists in Grafana's own DB (PVC-backed). |
+| `manifests/grafana-dashboard-mcp-gateway.json` | "MCP Gateway — Overview" dashboard — request rate/latency/status by CP/DP, tool call rate + p95 latency by server, top-tools table, log volume + raw logs from Loki, plus an unredacted "who did what" audit panel (see `gateway-log-shipper` below). Imported via the Grafana API (`docs/observability.md` Step 8); persists in Grafana's own DB (PVC-backed). |
+| `manifests/gateway-log-shipper.py` + `.yaml` | Tails CP/DP/sidecar pod logs via the K8s API (RBAC-only, no hostPath/privileged SCC) and pushes them into Loki under `{job="gateway-raw"}`, bypassing the gateway's own OTel pipeline — which strips `mcp.principal.id` before export (see `docs/observability.md` appendix). Only way to get per-user "who did what" into Grafana right now. |
 
 There is no build/test/lint. The README renders on GitHub; manifests are validated against live
 CRDs with `oc apply --dry-run=server` and the Template with `oc process --local`. Both milestones
@@ -216,6 +217,17 @@ a published release.
     deletes-then-recreates it under the new UID, once. `manifests/grafana-values.yaml` pins UIDs
     (`mcp-gw-prometheus-uwm`, `mcp-gw-loki`) so `manifests/grafana-dashboard-mcp-gateway.json` can reference
     them reliably.
+15. **The gateway's own "customer" log/metrics pipeline strips per-user identity — permanently, with no
+    CR toggle.** Its generated OTel Collector config runs a `transform/strip_internal` processor that
+    unconditionally `delete_key`s `mcp.principal.id` (and `client_id`, `scopes`, `mcp.client.name/version`,
+    `mcp.gateway.id`, `visibility`) from both `logs/customer` and `metrics/customer` before `tenantRouting`
+    ever sees them — so Loki/Grafana show request rates and tool names but never *which user*.
+    `oc explain gatewayserviceconfig.spec.observability.collector` has no field to disable it; the CRD docs
+    note a real unredacted `logs/audit` pipeline is planned but not yet implemented. The raw CP/DP/sidecar
+    pod stdout already has full identity (DP's own access-log and audit lines carry `principal_id`;
+    the sidecar logs `delegated PAT credential: server=X principal=Y` in plain text) — `manifests/
+    gateway-log-shipper.py`/`.yaml` tails those pods via the K8s API (RBAC-only) and re-ships them into
+    Loki unredacted. See `docs/observability.md`'s appendix.
 
 ## MCP protocol reality (for testing the gateway over HTTP)
 

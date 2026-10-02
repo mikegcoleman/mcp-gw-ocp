@@ -1,0 +1,77 @@
+# Ships raw, unredacted CP/DP/sidecar pod logs into Loki, bypassing the gateway's
+# own OTel "customer" pipeline (see docs/observability.md "Gateway logs lack
+# identity (who did what)" for why that pipeline strips mcp.principal.id and
+# other identity fields before export, with no CR-level way to disable it).
+#
+# Uses the Kubernetes API (pods/log) to tail logs, not hostPath — so it only
+# needs namespace-scoped RBAC, not a privileged SCC or a node-level DaemonSet.
+#
+# Apply:
+#   oc create configmap gateway-log-shipper-script -n mcp-gateway \
+#     --from-file=shipper.py=manifests/gateway-log-shipper.py \
+#     --dry-run=client -o yaml | oc apply -f -
+#   oc apply -f manifests/gateway-log-shipper.yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gateway-log-shipper
+  namespace: mcp-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gateway-log-shipper
+  namespace: mcp-gateway
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gateway-log-shipper
+  namespace: mcp-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gateway-log-shipper
+subjects:
+  - kind: ServiceAccount
+    name: gateway-log-shipper
+    namespace: mcp-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-log-shipper
+  namespace: mcp-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-log-shipper
+  template:
+    metadata:
+      labels:
+        app: gateway-log-shipper
+    spec:
+      serviceAccountName: gateway-log-shipper
+      containers:
+        - name: shipper
+          image: docker.io/library/python:3.12-alpine
+          command: ["python3", "/scripts/shipper.py"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: script
+          configMap:
+            name: gateway-log-shipper-script

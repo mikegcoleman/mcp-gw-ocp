@@ -732,6 +732,50 @@
         "sortOrder": "Descending",
         "enableLogDetails": true
       }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Audit Trail (unredacted \u2014 who did what)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "collapsed": false
+    },
+    {
+      "id": 19,
+      "type": "logs",
+      "title": "Who Did What \u2014 raw CP/DP/sidecar logs (principal, tool, server, policy result)",
+      "datasource": {
+        "type": "loki",
+        "uid": "mcp-gw-loki"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "options": {
+        "enableLogDetails": true,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessages": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "mcp-gw-loki"
+          },
+          "expr": "{job=\"gateway-raw\"}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

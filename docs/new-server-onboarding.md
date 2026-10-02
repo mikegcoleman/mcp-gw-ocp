@@ -62,7 +62,7 @@ flowchart TD
 
     CAT --> CREDS{Credentials?}
     CREDS -->|OAuth PKCE| OA[Add oauth.providers block\ngateway creates NAME-authorize primordial]
-    CREDS -->|Per-user PAT| PAT[Add auth_delegation: gateway\nLoad NAME-pat-OID secrets\ninto Azure Key Vault per user]
+    CREDS -->|Per-user PAT| PAT[Add routes.managed_auth: gateway\nLoad NAME-pat-OID secrets\ninto Azure Key Vault per user]
     CREDS -->|None — public server| PUSH
 
     OA --> PUSH

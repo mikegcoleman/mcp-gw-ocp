@@ -1,4 +1,4 @@
-# Team A MCP server catalog — managed by alice (msmikecol@hotmail.com).
+# Team A MCP server catalog — managed by alice (mikegcoleman@gmail.com).
 # Contains servers visible only to mcp-team-a members.
 # Apply: kubectl apply -n mcp-gateway -f catalog-team-a.yaml
 ---
@@ -17,7 +17,8 @@ data:
         title: Granola (Team A)
         description: Granola meeting notes — managed by team-a
         type: remote
-        auth_delegation: gateway
+        routes:
+          managed_auth: gateway
         remote:
           url: https://mcp.granola.ai/mcp
           transport_type: streamable-http

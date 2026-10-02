@@ -4,7 +4,7 @@
 # http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp.
 #
 # No token is set on this pod: the gateway injects each caller's PAT at request time
-# (catalog entry has `auth_delegation: gateway` → the Entra sidecar's
+# (catalog entry has `routes.managed_auth: gateway` → the Entra sidecar's
 # get_connection_headers returns the user's `github-pat-<oid>` from Key Vault).
 apiVersion: mcp.docker.com/v1alpha1
 kind: MCPServer

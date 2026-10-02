@@ -31,7 +31,7 @@ See the dedicated Milestone 2 section below.
 group-based server visibility via Entra App Roles + `MCPGateway.spec.policies.rules`. Adds a
 GitOps pipeline (alice's GHA workflow) plus a **sidecar policy lane** (`evaluate_policy` tool)
 so teams can self-serve tool-level deny rules via a ConfigMap without touching IT-owned CRs.
-Demo users: alice (`msmikecol@hotmail.com`, mcp-team-a → Granola) and
+Demo users: alice (`mikegcoleman@gmail.com`, mcp-team-a → Granola) and
 bob (`mike.coleman@docker.co`, mcp-team-b → Notion); both see DuckDuckGo + GitHub.
 
 ## Deployment architecture (two-phase, operator-driven)
@@ -63,7 +63,7 @@ and **no `gateway-service` subchart**.
 | `catalog-and-gateway.yaml` | M1 catalog ConfigMap (`mcp-catalog`) + MCPEnvironment (`pov-env`) + MCPGateway (`pov-gateway`). |
 | `docs/sidecar-entra.md` | Milestone 2 guide (Entra auth + per-user Key Vault creds), continues from the README. |
 | `docs/azure-setup.md` | M2 Azure prerequisites (Portal steps + a scripted `az` CLI appendix). |
-| `mcpserver-github.yaml` | M2 MCPServer CR — GitHub server (per-user PAT injection; `auth_delegation: gateway`). |
+| `mcpserver-github.yaml` | M2 MCPServer CR — GitHub server (per-user PAT injection; `routes.managed_auth: gateway`). |
 | `manifests/sidecar-deployment.yaml` | M2 Entra sidecar Deployment + Service (`mcp-entra-sidecar`) — OpenShift Template; requires `IMAGE` param. All env config comes from `sidecar-config` + `azure-sp-credentials` Secrets. Apply via `oc process -f … -p IMAGE=… \| oc apply -f -`. |
 | `sidecar/` | M2/M3 Entra sidecar source (Python/FastMCP) + Dockerfile. |
 | `servers/github/` | M2 GitHub MCP server Dockerfile (builds `github/github-mcp-server` from upstream). |
@@ -105,7 +105,7 @@ were run end-to-end on a fresh ARO cluster.
 | M3: Entra App Roles | `MCPGateway.User` (gateway entry) / `mcp-team-a` (alice → Granola) / `mcp-team-b` (bob → Notion) |
 | M3: team servers (prefixed to prevent collisions) | `team-a-granola` (mcp-team-a only) / `team-b-notion` (mcp-team-b only) |
 | M3: OAuth primordials | `team-a-granola-authorize` / `team-b-notion-authorize` (primordial name = `{serverName}-authorize`) |
-| M3: test users | alice `msmikecol@hotmail.com` (mcp-team-a) / bob `mike.coleman@docker.co` (mcp-team-b) |
+| M3: test users | alice `mikegcoleman@gmail.com` (mcp-team-a) / bob `mike.coleman@docker.co` (mcp-team-b) |
 | M3: team-a policy ConfigMap | `team-a-policy` (key `policy.yaml`) → mounted at `/etc/mcp-policy/` in sidecar pod |
 | M3: pipeline SA | `team-a-pipeline` |
 
@@ -277,8 +277,24 @@ auth_delegation:
 ```
 Re-wiring the gwsvc from M1's bearer plugin to this **replaces** client auth: after it, requests
 need an Entra JWT (the M1 static bearer no longer works). Catalog entries with
-`auth_delegation: gateway` (e.g. `github`) trigger the per-user PAT injection; DuckDuckGo stays
-plain (public).
+`routes.managed_auth: gateway` (e.g. `github`) trigger the per-user PAT injection; DuckDuckGo
+stays plain (public).
+
+> **Catalog schema note (found during a live v0.0.101 deployment):** the catalog registry field
+> is `routes.managed_auth: client|gateway`, **not** the older top-level `auth_delegation:` key —
+> that key is rejected outright by the CP's `CreateGateway` admission check
+> (`invalid_argument: parse inline catalog: auth_delegation is unsupported; use
+> routes.managed_auth: client or gateway`), with no detail surfaced anywhere except by calling
+> the CP's own Connect-RPC API directly (`/gateway.v1.GatewayService/CreateGateway`) — the
+> operator's own reconcile logs just show a bare `invalid_argument` under reason
+> `AwaitingCatalog`, which reads like a transient "catalog not ready yet" retry, not a config
+> error. If a fresh `CreateGateway` for a brand-new `MCPGateway` object stays stuck in
+> `AwaitingCatalog` with every serverNames/policies combination (including a minimal one-server,
+> no-policy spec) failing identically, suspect this field before anything else — do not assume
+> it's the Postgres/node-rollout flakiness that can coincidentally be happening at the same time
+> on a freshly-created ARO cluster (MachineConfigPool finishing its post-install node reboot
+> cordons nodes and briefly breaks Postgres's zone-pinned PV, which looks similar but resolves on
+> its own once `oc get mcp` shows both pools `Updated: True`).
 
 **M2 deploy gotchas:**
 - GitHub upstream runs as **root** → `mcpserver-github.yaml` sets `runAsNonRoot: false` and needs

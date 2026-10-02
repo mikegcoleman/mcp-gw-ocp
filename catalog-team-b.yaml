@@ -17,7 +17,8 @@ data:
         title: Notion (Team B)
         description: Notion workspace access — managed by team-b
         type: remote
-        auth_delegation: gateway
+        routes:
+          managed_auth: gateway
         remote:
           url: https://mcp.notion.com/mcp
           transport_type: streamable-http

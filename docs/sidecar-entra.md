@@ -170,7 +170,7 @@ oc rollout status deploy/mcp-github -n mcp-gateway
 ## Step 6 — Add GitHub to the catalog and gateway
 
 Edit the Milestone 1 catalog (`catalog-and-gateway.yaml`) to add a `github` registry entry
-**with `auth_delegation: gateway`** (this is what makes the gateway call the sidecar's
+**with `routes.managed_auth: gateway`** (this is what makes the gateway call the sidecar's
 `get_connection_headers` to inject the caller's PAT), and add `github` to the `MCPGateway`
 `serverNames`. DuckDuckGo stays as-is (no delegation — it's public):
 
@@ -181,7 +181,8 @@ Edit the Milestone 1 catalog (`catalog-and-gateway.yaml`) to add a `github` regi
         title: GitHub
         description: GitHub repository access — issues, PRs, code search
         type: remote
-        auth_delegation: gateway          # gateway injects the per-user PAT from the sidecar
+        routes:
+          managed_auth: gateway          # gateway injects the per-user PAT from the sidecar
         remote:
           url: http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp
           transport_type: streamable-http

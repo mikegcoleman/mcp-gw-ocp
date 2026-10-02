@@ -28,7 +28,8 @@ data:
         title: GitHub
         description: GitHub repository access — issues, PRs, code search
         type: remote
-        auth_delegation: gateway
+        routes:
+          managed_auth: gateway
         remote:
           url: http://mcp-github.mcp-gateway.svc.cluster.local:8080/mcp
           transport_type: streamable-http

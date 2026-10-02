@@ -61,7 +61,7 @@ server that doesn't match an allow rule is hidden from that user. This means:
 - team-a-granola has `role: mcp-team-a` → visible only to members of `mcp-team-a`
 - team-b-notion has `role: mcp-team-b` → visible only to members of `mcp-team-b`
 
-**OAuth PKCE for team servers:** Granola and Notion use `auth_delegation: gateway` with OAuth.
+**OAuth PKCE for team servers:** Granola and Notion use `routes.managed_auth: gateway` with OAuth.
 On the first tool call, the upstream returns 401 and the gateway's OAuth broker calls the sidecar
 to start a PKCE flow. After the user completes consent, the token is stored in Key Vault and
 injected automatically on subsequent calls. See [Step 6](#6-oauth-first-use-flow) below.
@@ -283,7 +283,7 @@ everyone sees DuckDuckGo and GitHub.
 
 ## 6. OAuth first-use flow
 
-Granola and Notion use `auth_delegation: gateway` with OAuth PKCE. On the first tool call
+Granola and Notion use `routes.managed_auth: gateway` with OAuth PKCE. On the first tool call
 after connecting:
 
 1. The gateway calls the upstream with no credentials → upstream returns 401

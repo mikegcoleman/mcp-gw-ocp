@@ -11,7 +11,7 @@
 #   GATEWAY_URL=<url> ./client_setup.sh            # skip oc lookup
 #
 # Users:
-#   alice  msmikecol@hotmail.com   mcp-team-a → GitHub + DuckDuckGo + Granola
+#   alice  mikegcoleman@gmail.com  mcp-team-a → GitHub + DuckDuckGo + Granola
 #   bob    mike.coleman@docker.co  mcp-team-b → GitHub + DuckDuckGo + Notion
 set -euo pipefail
 
@@ -57,7 +57,7 @@ setup_user bob
 
 echo "Both sandboxes ready."
 echo ""
-echo "  alice → ~/src/alice  (msmikecol@hotmail.com,  mcp-team-a → Granola)"
+echo "  alice → ~/src/alice  (mikegcoleman@gmail.com, mcp-team-a → Granola)"
 echo "  bob   → ~/src/bob    (mike.coleman@docker.co, mcp-team-b → Notion)"
 echo ""
 echo "Each user will be prompted to sign in with their Entra account the first"

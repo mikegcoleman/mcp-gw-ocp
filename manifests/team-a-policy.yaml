@@ -1,4 +1,4 @@
-# Team A policy rules — managed by alice (msmikecol@hotmail.com).
+# Team A policy rules — managed by alice (mikegcoleman@gmail.com).
 # Applied by the GHA pipeline; the sidecar's evaluate_policy tool reads
 # this ConfigMap from /etc/mcp-policy/ and evaluates it on every tool call.
 #

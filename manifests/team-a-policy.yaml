@@ -35,7 +35,7 @@ data:
     version: "1"
     #  rules: []
     # --- DEMO: uncomment to block meeting tools ---
-    # rules:
+    rules:
       - serverName: team-a-granola
         toolName: list_meetings
         effect: deny

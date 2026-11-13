@@ -12,8 +12,17 @@ Rule file format:
   rules:
     - serverName: team-a-granola  # required; omit to match any server
       toolName: list_meetings      # optional; omit to match any tool
-      effect: deny                 # required
+      effect: deny                 # required: "deny" or "confirm"
       reason: "..."               # optional; surfaced to the caller
+
+effect: deny always wins over effect: confirm, even if a confirm rule for the
+same server/tool appears earlier in the file — confirm is "allowed pending
+user", not a denial, and deny is the hard stop. "confirm" tells the gateway's
+ConfirmationProvider (an in-protocol MCP elicit to the calling client by
+default) to ask the user before the call proceeds; accept proceeds as if
+allowed, decline as if denied. If the client doesn't advertise the
+elicitation capability, the gateway fails closed to deny on its own — this
+module doesn't need to special-case that.
 """
 import glob
 import logging
@@ -57,12 +66,29 @@ def _evaluate(request: dict, _rules: list[dict] | None = None) -> dict:
     server_name = resource.get("server_name", "")
     tool_name = resource.get("tool_name", "")
 
-    for rule in (_rules if _rules is not None else _load_rules()):
+    rules = _rules if _rules is not None else _load_rules()
+
+    # Deny always wins, regardless of rule order relative to any matching
+    # confirm rule — deny is a hard stop, confirm is "allowed pending user".
+    for rule in rules:
         if rule.get("effect") == "deny" and _match(rule, server_name, tool_name):
             reason = rule.get("reason") or f"denied by policy rule ({server_name}/{tool_name})"
             log.info("policy: DENY server=%s tool=%s reason=%s", server_name, tool_name, reason)
             return {
                 "allowed": False,
+                "effect": "deny",
+                "outcome": "policy_rule",
+                "reason": reason,
+                "policy_source": "sidecar-configmap-policy",
+            }
+
+    for rule in rules:
+        if rule.get("effect") == "confirm" and _match(rule, server_name, tool_name):
+            reason = rule.get("reason") or f"confirmation required by policy rule ({server_name}/{tool_name})"
+            log.info("policy: CONFIRM server=%s tool=%s reason=%s", server_name, tool_name, reason)
+            return {
+                "allowed": True,
+                "effect": "confirm",
                 "outcome": "policy_rule",
                 "reason": reason,
                 "policy_source": "sidecar-configmap-policy",
@@ -70,8 +96,9 @@ def _evaluate(request: dict, _rules: list[dict] | None = None) -> dict:
 
     return {
         "allowed": True,
+        "effect": "allow",
         "outcome": "policy_rule",
-        "reason": "no deny rule matched",
+        "reason": "no deny or confirm rule matched",
         "policy_source": "sidecar-configmap-policy",
     }
 
@@ -84,12 +111,13 @@ def register_tools(mcp) -> None:
         """Evaluate a single policy request against ConfigMap-backed rules."""
         decision = _evaluate(request)
         log.info(
-            "policy: evaluate principal=%s action=%s server=%s tool=%s allowed=%s",
+            "policy: evaluate principal=%s action=%s server=%s tool=%s allowed=%s effect=%s",
             (request or {}).get("principal", {}).get("id", ""),
             (request or {}).get("action", ""),
             (request or {}).get("resource", {}).get("server_name", ""),
             (request or {}).get("resource", {}).get("tool_name", ""),
             decision["allowed"],
+            decision.get("effect", ""),
         )
         return {"result": decision}
 

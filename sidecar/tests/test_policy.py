@@ -95,6 +95,41 @@ def test_empty_request_allows():
     result = _evaluate({}, _rules=[])
     assert result["allowed"] is True
 
+# ── confirm effect ────────────────────────────────────────────────────────────
+
+def test_confirm_exact_match():
+    rules = [{"serverName": "team-a-granola", "toolName": "list_meetings", "effect": "confirm", "reason": "please confirm"}]
+    result = _evaluate(REQ, _rules=rules)
+    assert result["allowed"] is True
+    assert result["effect"] == "confirm"
+    assert result["reason"] == "please confirm"
+
+def test_confirm_server_only_matches_any_tool():
+    rules = [{"serverName": "team-a-granola", "effect": "confirm"}]
+    result = _evaluate(REQ, _rules=rules)
+    assert result["allowed"] is True
+    assert result["effect"] == "confirm"
+
+def test_confirm_wrong_tool_falls_through_to_allow():
+    rules = [{"serverName": "team-a-granola", "toolName": "get_meeting", "effect": "confirm"}]
+    result = _evaluate(REQ, _rules=rules)
+    assert result["allowed"] is True
+    assert result["effect"] == "allow"
+
+def test_deny_wins_over_confirm_regardless_of_order():
+    rules = [
+        {"serverName": "team-a-granola", "toolName": "list_meetings", "effect": "confirm", "reason": "ask first"},
+        {"serverName": "team-a-granola", "toolName": "list_meetings", "effect": "deny", "reason": "deny wins"},
+    ]
+    result = _evaluate(REQ, _rules=rules)
+    assert result["allowed"] is False
+    assert result["effect"] == "deny"
+    assert result["reason"] == "deny wins"
+
+def test_plain_allow_sets_effect_allow():
+    result = _evaluate(REQ, _rules=[])
+    assert result["effect"] == "allow"
+
 # ── _load_rules ───────────────────────────────────────────────────────────────
 
 def test_load_rules_missing_dir(tmp_path, monkeypatch):

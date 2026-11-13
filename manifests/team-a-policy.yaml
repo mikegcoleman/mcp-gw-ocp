@@ -8,8 +8,16 @@
 # Rule fields:
 #   serverName  required  backend server name (must start with team-a-)
 #   toolName    optional  omit to match all tools on this server
-#   effect      required  only "deny" is meaningful here
-#   reason      optional  surfaced to the caller in the error response
+#   effect      required  "deny" or "confirm" ("allow" is a no-op — the default
+#                          outcome is already allow when nothing matches)
+#   reason      optional  surfaced to the caller in the error response /
+#                          elicit prompt
+#
+# deny always wins over confirm, even if a confirm rule for the same
+# server/tool appears earlier in the file. confirm asks the user via the
+# gateway's in-protocol MCP elicit (client must advertise the elicitation
+# capability — confirmed Claude Code 2.1.323 does; if a client doesn't, the
+# gateway fails closed to deny on its own, no extra handling needed here).
 #
 # Demo: uncomment the rule below, push → pipeline applies it → alice's
 # next list_meetings call is denied. Re-comment and push to restore.

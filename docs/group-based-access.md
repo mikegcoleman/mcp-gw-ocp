@@ -425,8 +425,15 @@ Rule fields:
 |-------|----------|-------|
 | `serverName` | yes | must match the backend name (`team-a-granola`, not the prefixed tool name) |
 | `toolName` | no | omit to match all tools on this server |
-| `effect` | yes | only `deny` is evaluated; allow is the default |
-| `reason` | no | surfaced to the caller in the error response |
+| `effect` | yes | `deny` or `confirm` (`allow` is a no-op — plain allow is already the default when nothing matches) |
+| `reason` | no | surfaced to the caller in the error response, or in the confirm elicit prompt |
+
+**`confirm`** asks the user via the gateway's `ConfirmationProvider` — an in-protocol MCP elicit
+to the calling client by default — instead of blocking outright; accept proceeds as if allowed,
+decline as if denied. **`deny` always wins over `confirm`** for the same server/tool, regardless
+of which rule appears first in the file. Requires the client to advertise the `elicitation`
+capability (verified Claude Code 2.1.323 does, via its real `initialize` request); a client that
+doesn't gets failed closed to deny by the gateway itself — the sidecar doesn't special-case it.
 
 ConfigMap updates propagate to the sidecar pod within ~60 seconds (kubelet volume sync) — **no
 sidecar or DP restart needed**. The sidecar re-reads the files on every `evaluate_policy` call.

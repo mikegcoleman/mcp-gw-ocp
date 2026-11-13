@@ -41,6 +41,10 @@ data:
         effect: deny
         reason: "list_meetings temporarily restricted by team-a policy"
       - serverName: team-a-granola
+        toolName: search_meetings
+        effect: deny
+        reason: "search_meetings temporarily restricted by team-a policy"
+      - serverName: team-a-granola
         toolName: query_granola_meetings
         effect: deny
         reason: "query_granola_meetings temporarily restricted by team-a policy"

@@ -97,3 +97,15 @@ spec:
       #   action: invoke
       #   effect: deny
       #   reason: "list_meetings temporarily restricted by central IT"
+
+    # --- DEMO: killswitch (unconditional data-plane hard-stop, enforced
+    # independently of the rules above — see `oc explain
+    # mcpgateway.spec.policies.killSwitch`). Uncomment disabledServers to
+    # kill one server; push → pipeline applies it → every call to that
+    # server fails with "server disabled" regardless of role/rules.
+    # globalDisable is double-commented on purpose — it kills the ENTIRE
+    # gateway for EVERY user, not just one server. Uncomment deliberately.
+    # killSwitch:
+    #   disabledServers:
+    #     - duckduckgo
+    #   ##  globalDisable: true

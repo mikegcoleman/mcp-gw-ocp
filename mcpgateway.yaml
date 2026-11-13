@@ -107,5 +107,5 @@ spec:
     # gateway for EVERY user, not just one server. Uncomment deliberately.
     # killSwitch:
     #   disabledServers:
-    #     - duckduckgo
+    #     - team-a-granola
     #   ##  globalDisable: true

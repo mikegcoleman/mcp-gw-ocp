@@ -1,0 +1,79 @@
+# Static "what's running in this demo" status page — a quick-reference landing page
+# for the environment (gateway URL, demo users/teams/servers, governance layers,
+# links to Grafana/OpenShift console). Content is a hand-maintained snapshot, not
+# live-queried — update manifests/demo-status-page.html and re-apply when the
+# environment's shape changes (new users, servers, URLs, etc.).
+#
+# Apply:
+#   oc create configmap demo-status-page -n mcp-gateway \
+#     --from-file=index.html=manifests/demo-status-page.html \
+#     --dry-run=client -o yaml | oc apply -f -
+#   oc apply -f manifests/demo-status-page.yaml
+#
+# Uses nginxinc/nginx-unprivileged (listens on 8080 as a non-root UID) so it runs
+# under OpenShift's default restricted-v2 SCC with no extra grant needed.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-status-page
+  namespace: mcp-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-status-page
+  template:
+    metadata:
+      labels:
+        app: demo-status-page
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/nginxinc/nginx-unprivileged:alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: page
+              mountPath: /usr/share/nginx/html/index.html
+              subPath: index.html
+              readOnly: true
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+      volumes:
+        - name: page
+          configMap:
+            name: demo-status-page
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-status-page
+  namespace: mcp-gateway
+spec:
+  selector:
+    app: demo-status-page
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: demo-status-page
+  namespace: mcp-gateway
+spec:
+  host: "demo.apps.r0yf4nt7.eastus.aroapp.io"
+  to:
+    kind: Service
+    name: demo-status-page
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

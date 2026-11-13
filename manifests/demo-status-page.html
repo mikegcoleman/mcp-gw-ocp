@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MCP Gateway — Demo Environment</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151c; --border: #22262f;
+    --text: #e6e8ec; --muted: #8b92a3; --accent: #4f8cff;
+    --ok: #35c06b; --warn: #e0a634;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 20px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-bottom: 32px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px 24px; margin-bottom: 20px;
+  }
+  .card h2 {
+    font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); margin: 0 0 14px 0;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: #1b1f29; padding: 2px 6px; border-radius: 4px; font-size: 0.9em;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 0.92rem; }
+  th { color: var(--muted); font-weight: 500; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 0.78rem; font-weight: 600;
+  }
+  .badge.ok { background: rgba(53,192,107,0.15); color: var(--ok); }
+  .links a { display: inline-block; margin-right: 18px; margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .foot { color: var(--muted); font-size: 0.82rem; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MCP Gateway Enterprise — PoV Demo Environment</h1>
+  <div class="sub">ARO cluster <code>mcp-gw-aro</code> · eastus · gateway <code>pov-gateway</code></div>
+
+  <div class="card">
+    <h2>Gateway endpoint</h2>
+    <code>https://mcp-gw-dp.apps.r0yf4nt7.eastus.aroapp.io/gateways/sk/pov-gateway/mcp</code>
+    <div style="margin-top:10px; color:var(--muted); font-size:0.88rem;">
+      Entra JWT auth (DCR proxy enables full browser OAuth for Claude Code) ·
+      <span class="badge ok">M1 → M3 + observability</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Demo users</h2>
+    <table>
+      <tr><th>User</th><th>Entra account</th><th>Team / role</th><th>Sees</th></tr>
+      <tr>
+        <td>alice</td>
+        <td><code>mikegcoleman@gmail.com</code></td>
+        <td><code>mcp-team-a</code></td>
+        <td>DuckDuckGo, GitHub, Granola (<code>team-a-granola</code>)</td>
+      </tr>
+      <tr>
+        <td>bob</td>
+        <td><code>mike.coleman@docker.co</code></td>
+        <td><code>mcp-team-b</code></td>
+        <td>DuckDuckGo, GitHub, Notion (<code>team-b-notion</code>)</td>
+      </tr>
+    </table>
+    <div style="margin-top:10px; color:var(--muted); font-size:0.85rem;">
+      Server visibility is flip-to-deny via <code>mcpgateway.yaml</code> — a user without the
+      matching role simply doesn't see that server, no error.
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Governance / policy layers</h2>
+      <table>
+        <tr><td>Server visibility</td><td><code>mcpgateway.yaml</code> (IT-owned)</td></tr>
+        <tr><td>Killswitch</td><td><code>mcpgateway.yaml</code> <span style="color:var(--muted)">(commented demo block)</span></td></tr>
+        <tr><td>Tool-level deny/confirm</td><td><code>team-a-policy.yaml</code> (alice, self-service via GHA)</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Observability</h2>
+      <div style="color:var(--muted); font-size:0.88rem;">
+        Prometheus (UWM) + Loki + Grafana. Includes an unredacted
+        "who did what" audit panel (<code>gateway-log-shipper</code>) since the
+        gateway's own customer log pipeline strips principal identity by default.
+      </div>
+    </div>
+  </div>
+
+  <div class="card links">
+    <h2>Links</h2>
+    <a href="https://grafana.apps.r0yf4nt7.eastus.aroapp.io" target="_blank">Grafana dashboard →</a>
+    <a href="https://console-openshift-console.apps.r0yf4nt7.eastus.aroapp.io" target="_blank">OpenShift console →</a>
+    <a href="https://mcp-gw-dp.apps.r0yf4nt7.eastus.aroapp.io/dcr/health" target="_blank">DCR proxy health →</a>
+  </div>
+
+  <div class="foot">
+    Rendered from a static snapshot — update <code>manifests/demo-status-page.html</code> and
+    re-apply when the environment changes. Repo: mcp-gw-ocp.
+  </div>
+</div>
+</body>
+</html>

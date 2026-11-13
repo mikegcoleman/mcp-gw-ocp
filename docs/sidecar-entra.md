@@ -155,6 +155,28 @@ oc exec deploy/mcp-entra-sidecar -n mcp-gateway -- \
 
 The sidecar is reached in-cluster at `http://mcp-entra-sidecar.mcp-gateway.svc.cluster.local:8080/mcp`.
 
+### Step 4c — Create the OAuth callback Route
+
+The sidecar-config Secret (Step 4a) already points `MCP_GATEWAY_OAUTH_CALLBACK_BASE_URL` at
+`mcp-sidecar-oauth.$CLUSTER_DOMAIN`, and `manifests/sidecar-deployment.yaml`'s Service already
+exposes the `oauth` port (8082) — but nothing creates the Route for it. Without this, the OAuth
+PKCE flow (Milestone 3's Granola/Notion first-use consent) gets all the way through the upstream's
+consent screen and then fails on the callback: the upstream redirects the browser to
+`https://mcp-sidecar-oauth.$CLUSTER_DOMAIN/callback`, and with no Route there OpenShift's router
+returns a bare `503` instead of reaching the sidecar's callback handler.
+
+```bash
+oc create route edge mcp-sidecar-oauth --service=mcp-entra-sidecar --port=oauth \
+  --hostname="mcp-sidecar-oauth.$CLUSTER_DOMAIN" -n mcp-gateway
+```
+
+Verify it resolves (expect `400`, not `503` — a bare GET with no `code`/`state` query params is a
+correctly-routed but incomplete request):
+
+```bash
+curl -sS -k -o /dev/null -w "%{http_code}\n" "https://mcp-sidecar-oauth.$CLUSTER_DOMAIN/callback"
+```
+
 ## Step 5 — Deploy the GitHub MCP server
 
 Set your registry in `mcpserver-github.yaml` (replace `REPLACE_WITH_YOUR_REGISTRY`) and apply.
